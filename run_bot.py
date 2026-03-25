@@ -2,7 +2,8 @@ from __future__ import annotations
 
 import argparse
 
-from trading_bot.core.alert_engine import MonitorConfig, run_monitoring_loop
+from trading_bot.core.alert_engine import MonitorConfig, run_monitoring_loop, run_strict_market_scanner
+from trading_bot.core.instrument_universe import get_instrument_universe
 from trading_bot.core.news_engine import JsonEconomicCalendarProvider
 
 
@@ -13,8 +14,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--symbols",
         nargs="+",
-        default=["BTCUSDT"],
+        default=None,
         help="One or more symbols to monitor. Example: BTCUSDT EURUSD ETHUSDT",
+    )
+    parser.add_argument(
+        "--universe",
+        default="all",
+        help="Instrument group for strict scanning: all, forex, indices, crypto",
     )
     parser.add_argument(
         "--interval",
@@ -35,8 +41,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--poll-seconds",
         type=int,
-        default=60,
+        default=5,
         help="Polling interval in seconds.",
+    )
+    parser.add_argument(
+        "--mode",
+        default="strict",
+        choices=["strict", "classic"],
+        help="Use strict full-confluence scanner or classic monitor loop.",
     )
     parser.add_argument(
         "--news-calendar",
@@ -50,6 +62,15 @@ def main() -> None:
     """Build monitoring configs and start the real-time alert loop."""
 
     args = parse_args()
+    if args.mode == "strict":
+        run_strict_market_scanner(
+            group=args.universe,
+            source=args.source,
+            poll_interval_seconds=args.poll_seconds,
+        )
+        return
+
+    symbols = args.symbols or get_instrument_universe(args.universe)
     monitor_configs = [
         MonitorConfig(
             symbol=symbol,
@@ -57,7 +78,7 @@ def main() -> None:
             limit=args.limit,
             source=args.source,
         )
-        for symbol in args.symbols
+        for symbol in symbols
     ]
     news_provider = JsonEconomicCalendarProvider(args.news_calendar) if args.news_calendar else None
 

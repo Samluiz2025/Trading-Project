@@ -33,6 +33,8 @@ def ensure_trade_logged(
     confluences: list[str],
     confidence: int,
     timeframe: str,
+    timeframes_used: list[str] | None = None,
+    profit_factor: float | None = None,
 ) -> dict[str, Any] | None:
     """
     Persist a newly detected trade only once.
@@ -56,6 +58,8 @@ def ensure_trade_logged(
         "confluences": confluences,
         "confidence": int(confidence),
         "timeframe": timeframe,
+        "timeframes_used": timeframes_used or [timeframe],
+        "profit_factor": profit_factor,
         "timestamp": datetime.now(UTC).isoformat(),
         "status": "OPEN",
         "result": None,

@@ -4,6 +4,7 @@ const state = {
     source: "auto",
     widget: null,
     tradingViewSymbol: "FX:EURUSD",
+    requestId: 0,
 };
 
 function inferTradingViewSymbol(symbol) {
@@ -165,10 +166,60 @@ function renderBias(payload) {
     document.getElementById("live-price-badge").textContent = `Price: ${formatNumber(payload.latest_price)}`;
 }
 
+function renderLoadingState() {
+    const finalBiasElement = document.getElementById("final-bias");
+    finalBiasElement.textContent = "LOADING";
+    finalBiasElement.className = "final-bias neutral";
+    document.getElementById("htf-bias").textContent = "-";
+    document.getElementById("news-bias").textContent = "-";
+    document.getElementById("technical-bias").textContent = "-";
+    document.getElementById("confidence").textContent = "...";
+    document.getElementById("live-price-badge").textContent = "Price: ...";
+    document.getElementById("setup-panel").innerHTML = '<div class="empty-state">Refreshing analysis...</div>';
+    document.getElementById("setup-map-panel").innerHTML = '<div class="empty-state">Refreshing setup map...</div>';
+    document.getElementById("htf-panel").innerHTML = '<div class="empty-state">Refreshing HTF view...</div>';
+    document.getElementById("overlay-panel").innerHTML = '<div class="empty-state">Refreshing overlays...</div>';
+    document.getElementById("overlay-strip").innerHTML = '<span class="overlay-chip">Refreshing...</span>';
+}
+
 function renderSetup(payload) {
     const container = document.getElementById("setup-panel");
+    const strictExecution = payload.strict_execution || {};
+    const analysisContext = payload.analysis_context || {};
+
     if (!payload.active_strategy || payload.entry == null) {
-        container.innerHTML = '<div class="empty-state">No aligned high-confidence setup right now.</div>';
+        const contextLines = [];
+        if (analysisContext.execution_timeframe) {
+            contextLines.push(`Execution timeframe: ${analysisContext.execution_timeframe.toUpperCase()}`);
+        }
+        if (analysisContext.order_block?.confirmed) {
+            contextLines.push(`Order Block: ${analysisContext.order_block.block_type}`);
+        }
+        if (analysisContext.breaker_block?.confirmed) {
+            contextLines.push("Breaker Block confirmed");
+        }
+        if (analysisContext.fvg?.confirmed) {
+            contextLines.push("FVG is present near active block");
+        }
+        if (analysisContext.liquidity?.confirmed) {
+            contextLines.push("Liquidity sweep detected");
+        }
+        if (analysisContext.inducement?.confirmed) {
+            contextLines.push("Inducement detected");
+        }
+        if (analysisContext.mss?.confirmed) {
+            contextLines.push(`MSS: ${analysisContext.mss.signal || "-"}`);
+        }
+        if (analysisContext.bos?.confirmed) {
+            contextLines.push(`BOS count: ${analysisContext.bos.bos_count || 0}`);
+        }
+
+        container.innerHTML = createCard(
+            strictExecution.setup === "WAIT" ? "Setup Building" : "No Active Setup",
+            contextLines.length ? contextLines : ["No aligned high-confidence setup right now."],
+            "neutral",
+            strictExecution.setup || "WAIT",
+        );
         renderSetupMap(payload, false);
         return;
     }
@@ -191,8 +242,44 @@ function renderSetup(payload) {
 
 function renderSetupMap(payload, hasSetup) {
     const container = document.getElementById("setup-map-panel");
+    const analysisContext = payload.analysis_context || {};
     if (!hasSetup || payload.entry == null) {
-        container.innerHTML = '<div class="empty-state">No live setup map yet. When a valid setup appears, entry, stop, target, and confluences will show here.</div>';
+        const contextCards = [];
+        if (analysisContext.active_block?.zone) {
+            const zone = analysisContext.active_block.zone;
+            contextCards.push(createCard(
+                `Active ${analysisContext.active_block.block_type || "Block"}`,
+                [
+                    `Type: ${zone.type}`,
+                    `Zone: ${formatNumber(zone.start_price)} -> ${formatNumber(zone.end_price)}`,
+                    `Quality: ${analysisContext.active_block.quality_score || 0}`,
+                ],
+                "info",
+                analysisContext.active_block.block_type || "block",
+            ));
+        }
+        if (analysisContext.fvg?.confirmed && analysisContext.fvg.gap) {
+            contextCards.push(createCard(
+                "Nearest FVG",
+                [
+                    `Entry: ${formatNumber(analysisContext.fvg.gap.entry)}`,
+                    `SL: ${formatNumber(analysisContext.fvg.gap.stop_loss)}`,
+                    `TP: ${formatNumber(analysisContext.fvg.gap.take_profit)}`,
+                ],
+                "info",
+                "fvg",
+            ));
+        }
+        if (analysisContext.liquidity?.equal_levels?.length) {
+            contextCards.push(createCard(
+                "Liquidity Levels",
+                analysisContext.liquidity.equal_levels.map((level) => `${level.type}: ${formatNumber(level.first)} / ${formatNumber(level.second)}`),
+                "info",
+                "liq",
+            ));
+        }
+
+        container.innerHTML = contextCards.join("") || '<div class="empty-state">No live setup map yet. When a valid setup appears, entry, stop, target, and confluences will show here.</div>';
         return;
     }
 
@@ -409,6 +496,9 @@ function renderPerformance(performance) {
     const conceptSummary = (performance.best_concepts || [])
         .map((concept) => `${concept.name} (${concept.count})`)
         .join(", ") || "None";
+    const confluenceSummary = (performance.strongest_confluence_combinations || [])
+        .map((combo) => `${combo.name} (${combo.count})`)
+        .join(" | ") || "None";
 
     const cards = [
         createCard(
@@ -427,6 +517,12 @@ function renderPerformance(performance) {
             [conceptSummary],
             "info",
             "concepts",
+        ),
+        createCard(
+            "Strongest Confluences",
+            [confluenceSummary],
+            "info",
+            "confluence",
         ),
     ];
 
@@ -490,9 +586,17 @@ function syncBackendInputsFromTradingView() {
 async function refreshDashboard(forceChart = false) {
     syncStateFromInputs();
     renderTradingViewWidget(forceChart);
+    renderLoadingState();
+    const requestId = ++state.requestId;
 
     try {
         const payload = await fetchDashboardData();
+        if (requestId !== state.requestId) {
+            return;
+        }
+        if (String(payload.symbol || "").toUpperCase() !== state.symbol) {
+            throw new Error(`Backend returned ${payload.symbol || "unknown symbol"} while ${state.symbol} was requested.`);
+        }
         renderBias(payload);
         renderSetup(payload);
         renderHtfAndOverlays(payload);
@@ -500,17 +604,37 @@ async function refreshDashboard(forceChart = false) {
         renderJournal(payload.journal || []);
         renderPerformance(payload.performance || {});
     } catch (error) {
+        if (requestId !== state.requestId) {
+            return;
+        }
+        renderLoadingState();
         renderAlerts([{ type: "news", message: error.message }]);
     }
 }
 
+function debounce(callback, waitMs) {
+    let timeoutId = null;
+    return (...args) => {
+        if (timeoutId) {
+            clearTimeout(timeoutId);
+        }
+        timeoutId = setTimeout(() => callback(...args), waitMs);
+    };
+}
+
 function bindEvents() {
+    const debouncedRefresh = debounce(() => refreshDashboard(true), 300);
     document.getElementById("refresh-button").addEventListener("click", () => refreshDashboard(true));
     document.getElementById("tv-symbol-input").addEventListener("change", () => {
         syncBackendInputsFromTradingView();
         refreshDashboard(true);
     });
     document.getElementById("symbol-input").addEventListener("change", () => refreshDashboard(true));
+    document.getElementById("symbol-input").addEventListener("input", () => debouncedRefresh());
+    document.getElementById("tv-symbol-input").addEventListener("input", () => {
+        syncBackendInputsFromTradingView();
+        debouncedRefresh();
+    });
     document.getElementById("source-select").addEventListener("change", () => refreshDashboard(false));
     document.getElementById("interval-select").addEventListener("change", () => refreshDashboard(true));
 }

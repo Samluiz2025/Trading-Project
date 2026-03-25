@@ -22,11 +22,15 @@ def build_performance_snapshot() -> dict:
     strategy_breakdown: dict[str, dict] = {}
     strategy_groups: defaultdict[str, list[dict]] = defaultdict(list)
     concept_counter: Counter[str] = Counter()
+    confluence_combo_counter: Counter[str] = Counter()
 
     for entry in journal:
         strategy_groups[entry.get("strategy", "Unknown")].append(entry)
         for concept in entry.get("confluences", []):
             concept_counter[concept] += 1
+        combo = " + ".join(sorted(entry.get("confluences", [])))
+        if combo:
+            confluence_combo_counter[combo] += 1
 
     for strategy_name, entries in strategy_groups.items():
         closed_entries = [entry for entry in entries if entry.get("result") in {"WIN", "LOSS"}]
@@ -52,6 +56,10 @@ def build_performance_snapshot() -> dict:
         "total_trades": len(journal),
         "closed_trades": len(closed),
         "best_concepts": [{"name": name, "count": count} for name, count in concept_counter.most_common(5)],
+        "strongest_confluence_combinations": [
+            {"name": name, "count": count}
+            for name, count in confluence_combo_counter.most_common(5)
+        ],
         "strategy_breakdown": strategy_breakdown,
         "best_strategies": best_research_strategies,
     }

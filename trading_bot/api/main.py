@@ -12,6 +12,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
 from trading_bot.core.ai_engine import get_model_status, predict_signal, record_trade_result, train_model
+from trading_bot.core.alert_engine import get_recent_alerts
 from trading_bot.core.data_fetcher import DataFetchError, FetchConfig, fetch_ohlc
 from trading_bot.core.journal import ensure_trade_logged, get_recent_journal, update_trade_result
 from trading_bot.core.market_structure import detect_market_structure
@@ -23,6 +24,7 @@ from trading_bot.core.news_engine import (
     split_symbol_currencies,
 )
 from trading_bot.core.performance_tracker import build_performance_snapshot
+from trading_bot.core.strategy_execution_engine import ExecutionConfig, evaluate_strict_execution_setup
 from trading_bot.core.strategy_engine import generate_trade_setup
 from trading_bot.core.supply_demand import detect_supply_demand_zones
 
@@ -69,6 +71,12 @@ def get_frontend_data(
             news_provider=news_provider,
             current_time=current_time,
         )
+        strict_result = evaluate_strict_execution_setup(
+            ExecutionConfig(
+                symbol=symbol,
+                source=source,
+            )
+        )
         alerts = _build_frontend_alerts(
             symbol=symbol,
             state=state,
@@ -79,47 +87,95 @@ def get_frontend_data(
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Dashboard data build failed: {exc}") from exc
 
+    active_strategy = state.get("active_strategy")
+    active_entry = state.get("entry")
+    active_sl = state.get("sl")
+    active_tp = state.get("tp")
+    active_confluences = state.get("confluences", [])
+    active_confidence = int(state.get("confidence", 0))
     setup_list = [state["raw_setup"]] if state.get("raw_setup") else []
-    if state.get("active_strategy") and state.get("entry") is not None:
+
+    if strict_result.get("setup") == "HIGH_PROBABILITY":
+        active_strategy = "Strict SMC/ICT Execution"
+        active_entry = strict_result.get("entry")
+        active_sl = strict_result.get("sl")
+        active_tp = strict_result.get("tp")
+        active_confluences = strict_result.get("confluences", [])
+        active_confidence = int(strict_result.get("confidence", 0))
+        setup_list = [
+            {
+                "signal": strict_result["bias"],
+                "entry": strict_result["entry"],
+                "stop_loss": strict_result["sl"],
+                "take_profit": strict_result["tp"],
+                "zone_type": strict_result["details"]["active_block"]["block_type"],
+            }
+        ]
+
+    performance = build_performance_snapshot()
+    if active_strategy and active_entry is not None and active_sl is not None and active_tp is not None:
         ensure_trade_logged(
             symbol=symbol,
-            strategy=state["active_strategy"],
-            entry=float(state["entry"]),
-            stop_loss=float(state["sl"]),
-            take_profit=float(state["tp"]),
-            confluences=state["confluences"],
-            confidence=int(state["confidence"]),
+            strategy=active_strategy,
+            entry=float(active_entry),
+            stop_loss=float(active_sl),
+            take_profit=float(active_tp),
+            confluences=active_confluences,
+            confidence=active_confidence,
             timeframe=interval,
+            timeframes_used=[
+                "1d",
+                strict_result.get("execution_timeframe", interval) if strict_result else interval,
+            ],
+            profit_factor=performance.get("profit_factor"),
         )
 
     journal_entries = get_recent_journal(limit=12)
-    performance = build_performance_snapshot()
     return {
         "symbol": symbol.upper(),
         "interval": interval,
         "source": source,
         "technical_bias": state["technical_bias"],
         "news_bias": state["news_bias"],
-        "final_bias": state["final_bias"],
-        "confidence": state["confidence"],
+        "final_bias": strict_result["bias"].lower() if strict_result.get("setup") == "HIGH_PROBABILITY" else state["final_bias"],
+        "confidence": active_confidence,
         "latest_price": state["latest_price"],
-        "active_strategy": state.get("active_strategy"),
-        "entry": state.get("entry"),
-        "sl": state.get("sl"),
-        "tp": state.get("tp"),
-        "confluences": state.get("confluences", []),
+        "active_strategy": active_strategy,
+        "entry": active_entry,
+        "sl": active_sl,
+        "tp": active_tp,
+        "confluences": active_confluences,
         "chart_overlays": state.get("chart_overlays", {}),
         "htf": state["htf"],
         "ltf": state["ltf"],
         "news_events": state["news_events"],
         "ranking_score": state.get("ranking_score", 0),
         "historical_win_rate": state.get("historical_win_rate", 0),
+        "strict_execution": strict_result,
+        "analysis_context": {
+            "order_block": strict_result.get("details", {}).get("order_block"),
+            "breaker_block": strict_result.get("details", {}).get("breaker_block"),
+            "active_block": strict_result.get("details", {}).get("active_block"),
+            "fvg": strict_result.get("details", {}).get("fvg"),
+            "liquidity": strict_result.get("details", {}).get("liquidity"),
+            "mss": strict_result.get("details", {}).get("mss"),
+            "bos": strict_result.get("details", {}).get("bos"),
+            "inducement": strict_result.get("details", {}).get("inducement"),
+            "execution_timeframe": strict_result.get("execution_timeframe"),
+        },
         "setups": setup_list,
         "zones": state["htf"]["zones"],
-        "alerts": alerts,
+        "alerts": get_recent_alerts(limit=12) or alerts,
         "journal": journal_entries,
         "performance": performance,
     }
+
+
+@app.get("/alerts")
+def get_alerts(limit: int = Query(default=50, ge=1, le=200)) -> dict:
+    """Return recent persisted setup/news alerts."""
+
+    return {"alerts": get_recent_alerts(limit=limit)}
 
 
 @app.get("/journal")

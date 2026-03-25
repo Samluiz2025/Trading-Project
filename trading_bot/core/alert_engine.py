@@ -7,13 +7,16 @@ from datetime import UTC, datetime
 
 import requests
 
+from trading_bot.core.alerts_store import append_alert, load_alerts
 from trading_bot.core.data_fetcher import FetchConfig, fetch_ohlc
+from trading_bot.core.instrument_universe import get_instrument_universe
 from trading_bot.core.market_structure import detect_market_structure
 from trading_bot.core.news_engine import (
     EconomicCalendarProvider,
     build_news_alerts,
     fetch_market_moving_events,
 )
+from trading_bot.core.strategy_execution_engine import ExecutionConfig, evaluate_strict_execution_setup, format_high_setup_alert
 from trading_bot.core.strategy_engine import generate_trade_setup
 from trading_bot.core.supply_demand import detect_supply_demand_zones
 
@@ -39,6 +42,7 @@ class AlertState:
     alerted_upcoming_news_keys: set[str] = field(default_factory=set)
     alerted_released_news_keys: set[str] = field(default_factory=set)
     alerted_sudden_news_keys: set[str] = field(default_factory=set)
+    alerted_strict_setup_keys: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -171,6 +175,83 @@ def run_monitoring_loop(
                 print(f"[ERROR] {symbol_key} monitor failed: {exc}")
 
         time.sleep(poll_interval_seconds)
+
+
+def monitor_strict_symbol(
+    symbol: str,
+    source: str = "auto",
+    state: AlertState | None = None,
+) -> tuple[list[dict], AlertState]:
+    """Monitor the strict SMC/ICT engine and emit alerts only for full setups."""
+
+    active_state = state or AlertState()
+    result = evaluate_strict_execution_setup(
+        ExecutionConfig(
+            symbol=symbol,
+            source=source,
+        )
+    )
+    if result.get("setup") != "HIGH_PROBABILITY":
+        return [], active_state
+
+    signature = _build_strict_setup_signature(result)
+    if signature in active_state.alerted_strict_setup_keys:
+        return [], active_state
+
+    message = format_high_setup_alert(result)
+    alert_payload = {
+        "type": "high_setup",
+        "signature": signature,
+        "pair": result["pair"],
+        "bias": result["bias"],
+        "entry": result["entry"],
+        "stop_loss": result["sl"],
+        "take_profit": result["tp"],
+        "confluences": result["confluences"],
+        "confidence": result["confidence"],
+        "message": message,
+    }
+    append_alert(alert_payload)
+    active_state.alerted_strict_setup_keys.add(signature)
+    return [alert_payload], active_state
+
+
+def run_strict_market_scanner(
+    group: str = "all",
+    source: str = "auto",
+    poll_interval_seconds: int = 5,
+) -> None:
+    """Continuously scan the configured universe for full high-probability setups."""
+
+    symbols = get_instrument_universe(group)
+    state_by_symbol = {symbol.upper(): AlertState() for symbol in symbols}
+    telegram_config = load_telegram_config()
+
+    print(f"[INFO] Strict market scanner started for {group} universe.")
+    print(f"[INFO] Scanning {len(symbols)} symbols every {poll_interval_seconds} seconds.")
+
+    while True:
+        for symbol in symbols:
+            try:
+                alerts, next_state = monitor_strict_symbol(
+                    symbol=symbol,
+                    source=source,
+                    state=state_by_symbol[symbol.upper()],
+                )
+                state_by_symbol[symbol.upper()] = next_state
+                for alert in alerts:
+                    if alert["message"]:
+                        print(alert["message"])
+                        send_telegram_alert(alert["message"], telegram_config)
+            except Exception as exc:
+                print(f"[ERROR] Strict scanner failed for {symbol.upper()}: {exc}")
+        time.sleep(poll_interval_seconds)
+
+
+def get_recent_alerts(limit: int = 50) -> list[dict]:
+    """Return persisted alerts for API and dashboard use."""
+
+    return list(reversed(load_alerts(limit=limit)))
 
 
 def load_telegram_config() -> TelegramConfig | None:
@@ -370,3 +451,15 @@ def _get_symbol_currencies(symbol: str) -> tuple[str, str]:
         return cleaned[:3], cleaned[3:6]
 
     return cleaned, "USD"
+
+
+def _build_strict_setup_signature(result: dict) -> str:
+    return "|".join(
+        [
+            result["pair"],
+            result["bias"],
+            f"{result['entry']:.4f}",
+            f"{result['sl']:.4f}",
+            f"{result['tp']:.4f}",
+        ]
+    )
