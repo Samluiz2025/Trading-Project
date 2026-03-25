@@ -1,19 +1,31 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Literal
 
 import pandas as pd
 from fastapi import FastAPI, HTTPException, Query
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.staticfiles import StaticFiles
 
 from trading_bot.core.data_fetcher import DataFetchError, FetchConfig, fetch_ohlc
 from trading_bot.core.market_structure import detect_market_structure
+from trading_bot.core.news_engine import (
+    JsonEconomicCalendarProvider,
+    build_news_alerts,
+    fetch_market_moving_events,
+    split_symbol_currencies,
+)
 from trading_bot.core.strategy_engine import generate_trade_setup
 from trading_bot.core.supply_demand import detect_supply_demand_zones
 
 
 DataSource = Literal["auto", "binance", "mock", "yfinance", "oanda", "alphavantage", "twelvedata", "stooq"]
+BASE_DIR = Path(__file__).resolve().parents[2]
+FRONTEND_DIR = BASE_DIR / "frontend"
+DEFAULT_NEWS_CALENDAR_PATH = BASE_DIR / "trading_bot" / "data" / "economic_calendar.json"
 
 
 app = FastAPI(
@@ -21,15 +33,77 @@ app = FastAPI(
     version="0.2.0",
     description="Phase 2 backend with market bias, zones, setups, and chart visualization.",
 )
+app.mount("/frontend", StaticFiles(directory=FRONTEND_DIR), name="frontend")
 
 
 @app.get("/")
-def root() -> dict:
-    """Simple entrypoint that confirms the API is running."""
+def root() -> HTMLResponse:
+    """Serve the TradingView-based dashboard from the application root."""
 
+    return get_tradingview_page(
+        symbol="FX:EURUSD",
+        interval="15",
+        backend_symbol="EURUSD",
+        backend_interval="15m",
+        source="auto",
+    )
+
+
+@app.get("/data")
+def get_frontend_data(
+    symbol: str = Query(default="EURUSD", description="Instrument symbol."),
+    interval: str = Query(default="15m", description="Backend candle interval."),
+    limit: int = Query(default=200, ge=20, le=1000, description="Number of candles."),
+    source: DataSource = Query(default="auto", description="OHLC data source."),
+) -> dict:
+    """Return frontend-ready dashboard data from the existing backend engines."""
+
+    try:
+        candles = fetch_ohlc(
+            FetchConfig(
+                symbol=symbol,
+                interval=interval,
+                limit=limit,
+                source=source,
+            )
+        )
+        zones = detect_supply_demand_zones(candles, symbol=symbol, timeframe=interval)
+        news_provider = _load_default_news_provider()
+        current_time = datetime.now(UTC)
+        news_events = fetch_market_moving_events(
+            provider=news_provider,
+            currencies=list(split_symbol_currencies(symbol)),
+            current_time=current_time,
+        )
+        setup_payload = generate_trade_setup(
+            candles,
+            symbol=symbol,
+            timeframe=interval,
+            news_events=news_events,
+            current_time=current_time,
+        )
+        alerts = _build_frontend_alerts(
+            symbol=symbol,
+            setup_payload=setup_payload,
+            news_events=news_events,
+            current_time=current_time,
+        )
+    except DataFetchError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    setup_list = [setup_payload["setup"]] if setup_payload["setup"] else []
     return {
-        "message": "Trading Intelligence System API is running.",
-        "endpoints": ["/bias", "/zones", "/setup", "/chart", "/chart_data", "/tradingview", "/docs", "/health"],
+        "symbol": symbol.upper(),
+        "interval": interval,
+        "source": source,
+        "technical_bias": setup_payload["technical_bias"],
+        "news_bias": setup_payload["news_bias"],
+        "final_bias": setup_payload["final_bias"],
+        "confidence": setup_payload["confidence"],
+        "latest_price": setup_payload["latest_price"],
+        "setups": setup_list,
+        "zones": zones,
+        "alerts": alerts,
     }
 
 
@@ -760,18 +834,18 @@ def get_chart(
 
 @app.get("/tradingview", response_class=HTMLResponse)
 def get_tradingview_page(
-    symbol: str = Query(default="BINANCE:BTCUSDT", description="TradingView symbol."),
-    interval: str = Query(default="60", description="TradingView interval."),
-    backend_symbol: str = Query(default="BTCUSDT", description="Backend analysis symbol."),
-    backend_interval: str = Query(default="1h", description="Backend candle interval."),
+    symbol: str = Query(default="FX:EURUSD", description="TradingView symbol."),
+    interval: str = Query(default="15", description="TradingView interval."),
+    backend_symbol: str = Query(default="EURUSD", description="Backend analysis symbol."),
+    backend_interval: str = Query(default="15m", description="Backend candle interval."),
     source: DataSource = Query(default="auto", description="Backend OHLC data source."),
 ) -> HTMLResponse:
     """Render a TradingView widget page with your backend analysis beside it."""
 
-    analysis_payload = get_chart_data(
+    analysis_payload = get_frontend_data(
         symbol=backend_symbol,
         interval=backend_interval,
-        limit=120,
+        limit=200,
         source=source,
     )
     analysis_json = json.dumps(analysis_payload)
@@ -986,11 +1060,11 @@ def get_tradingview_page(
                 <h1>TradingView + Backend Intelligence</h1>
                 <p>
                     TradingView handles the chart rendering while your own backend supplies
-                    trend, zones, and trade setup logic beside it.
+                    technical bias, news bias, final bias, confidence, setups, zones, and alerts.
                 </p>
             </div>
             <div class="muted">
-                Example symbols: BINANCE:BTCUSDT, OANDA:XAUUSD, FX:EURUSD, CAPITALCOM:US100
+                Example symbols: FX:EURUSD, BINANCE:BTCUSDT, OANDA:XAUUSD, OANDA:USOIL, CAPITALCOM:US100
             </div>
         </section>
 
@@ -1117,6 +1191,22 @@ def get_tradingview_page(
                             <div class="metric-label">Latest Price</div>
                             <div class="metric-value" id="metric-price">-</div>
                         </div>
+                        <div class="metric">
+                            <div class="metric-label">Technical Bias</div>
+                            <div class="metric-value" id="metric-technical-bias">-</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">News Bias</div>
+                            <div class="metric-value" id="metric-news-bias">-</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Final Bias</div>
+                            <div class="metric-value" id="metric-final-bias">-</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Confidence</div>
+                            <div class="metric-value" id="metric-confidence">-</div>
+                        </div>
                     </div>
                 </div>
 
@@ -1133,6 +1223,13 @@ def get_tradingview_page(
                     </div>
                     <div id="zones-container" class="list"></div>
                 </div>
+
+                <div class="panel">
+                    <div class="panel-header">
+                        <div class="panel-title">Latest Alerts</div>
+                    </div>
+                    <div id="alerts-container" class="list"></div>
+                </div>
             </div>
         </section>
     </div>
@@ -1145,14 +1242,23 @@ def get_tradingview_page(
         document.getElementById("backend-source-select").value = "{source}";
 
         let widget = null;
+        let currentTvSymbol = null;
+        let currentTvInterval = null;
 
         function formatNumber(value) {{
             return typeof value === "number" ? value.toFixed(4) : "-";
         }}
 
-        function renderTradingViewWidget() {{
+        function renderTradingViewWidget(force = false) {{
             const tvSymbol = document.getElementById("tv-symbol-input").value.trim();
             const tvInterval = document.getElementById("tv-interval-select").value;
+
+            if (!force && widget && tvSymbol === currentTvSymbol && tvInterval === currentTvInterval) {{
+                return;
+            }}
+
+            currentTvSymbol = tvSymbol;
+            currentTvInterval = tvInterval;
             document.getElementById("chart-title").textContent = `TradingView: ${{tvSymbol}}`;
             document.getElementById("tv-widget").innerHTML = "";
 
@@ -1251,25 +1357,29 @@ def get_tradingview_page(
             document.getElementById("metric-interval").textContent = payload.interval;
             document.getElementById("metric-source").textContent = payload.source;
             document.getElementById("metric-price").textContent = formatNumber(payload.latest_price);
+            document.getElementById("metric-technical-bias").textContent = (payload.technical_bias || "-").toUpperCase();
+            document.getElementById("metric-news-bias").textContent = (payload.news_bias || "-").toUpperCase();
+            document.getElementById("metric-final-bias").textContent = (payload.final_bias || "-").toUpperCase();
+            document.getElementById("metric-confidence").textContent = `${{payload.confidence ?? 0}}%`;
 
             const trendBadge = document.getElementById("trend-badge");
-            trendBadge.textContent = payload.trend;
-            trendBadge.className = `trend ${{payload.trend}}`;
+            trendBadge.textContent = payload.final_bias || payload.trend;
+            trendBadge.className = `trend ${{payload.final_bias || payload.trend || 'ranging'}}`;
 
             const setupContainer = document.getElementById("setup-container");
-            if (!payload.setup) {{
+            if (!payload.setups || !payload.setups.length) {{
                 setupContainer.innerHTML = '<div class="empty">No active setup at the current price.</div>';
             }} else {{
-                setupContainer.innerHTML = `
+                setupContainer.innerHTML = payload.setups.map(setup => `
                     <div class="list-item">
-                        <strong>${{payload.setup.signal}} setup</strong>
-                        <div class="muted">Zone type: ${{payload.setup.zone_type}}</div>
-                        <div>Entry: ${{formatNumber(payload.setup.entry)}}</div>
-                        <div>Stop Loss: ${{formatNumber(payload.setup.stop_loss)}}</div>
-                        <div>Take Profit: ${{formatNumber(payload.setup.take_profit)}}</div>
-                        <div>R:R: ${{payload.setup.risk_reward_ratio}}</div>
+                        <strong>${{setup.signal}} setup</strong>
+                        <div class="muted">Zone type: ${{setup.zone_type}}</div>
+                        <div>Entry: ${{formatNumber(setup.entry)}}</div>
+                        <div>Stop Loss: ${{formatNumber(setup.stop_loss)}}</div>
+                        <div>Take Profit: ${{formatNumber(setup.take_profit)}}</div>
+                        <div>R:R: ${{setup.risk_reward_ratio}}</div>
                     </div>
-                `;
+                `).join("");
             }}
 
             const zonesContainer = document.getElementById("zones-container");
@@ -1289,6 +1399,18 @@ def get_tradingview_page(
                     `)
                     .join("");
             }}
+
+            const alertsContainer = document.getElementById("alerts-container");
+            if (!payload.alerts || !payload.alerts.length) {{
+                alertsContainer.innerHTML = '<div class="empty">No recent alerts.</div>';
+            }} else {{
+                alertsContainer.innerHTML = payload.alerts.map(alert => `
+                    <div class="list-item">
+                        <strong>${{alert.type.replace('_', ' ').toUpperCase()}}</strong>
+                        <div class="muted">${{alert.message}}</div>
+                    </div>
+                `).join("");
+            }}
         }}
 
         async function applyDashboard() {{
@@ -1296,9 +1418,7 @@ def get_tradingview_page(
             const backendInterval = document.getElementById("backend-interval-select").value;
             const backendSource = document.getElementById("backend-source-select").value;
 
-            renderTradingViewWidget();
-
-            const response = await fetch(`/chart_data?symbol=${{backendSymbol}}&interval=${{backendInterval}}&limit=120&source=${{backendSource}}`);
+            const response = await fetch(`/data?symbol=${{backendSymbol}}&interval=${{backendInterval}}&limit=200&source=${{backendSource}}`);
             if (!response.ok) {{
                 const errorPayload = await response.json();
                 alert(errorPayload.detail || "Failed to load backend analysis.");
@@ -1309,13 +1429,23 @@ def get_tradingview_page(
             updateAnalysisPanel(payload);
         }}
 
-        renderTradingViewWidget();
+        renderTradingViewWidget(true);
         syncBackendInputsFromTradingView();
         updateAnalysisPanel(initialAnalysis);
 
         document.getElementById("tv-symbol-input").addEventListener("change", () => {{
             syncBackendInputsFromTradingView();
+            renderTradingViewWidget(true);
+            applyDashboard();
         }});
+
+        document.getElementById("tv-interval-select").addEventListener("change", () => {{
+            renderTradingViewWidget(true);
+        }});
+
+        setInterval(() => {{
+            applyDashboard().catch(error => console.error("Dashboard refresh failed:", error));
+        }}, 5000);
     </script>
 </body>
 </html>
@@ -1364,3 +1494,51 @@ def _serialize_swing_for_chart(swing: dict) -> dict:
         **swing,
         "time": int(pd.Timestamp(swing["time"]).timestamp()),
     }
+
+
+def _load_default_news_provider() -> JsonEconomicCalendarProvider | None:
+    """Load the default local economic calendar provider if the file exists."""
+
+    if not DEFAULT_NEWS_CALENDAR_PATH.exists():
+        return None
+    return JsonEconomicCalendarProvider(DEFAULT_NEWS_CALENDAR_PATH)
+
+
+def _build_frontend_alerts(
+    symbol: str,
+    setup_payload: dict,
+    news_events: list,
+    current_time: datetime,
+) -> list[dict]:
+    """Build a compact set of frontend alerts from current backend state."""
+
+    alerts: list[dict] = []
+
+    if setup_payload["setup"]:
+        alerts.append(
+            {
+                "type": "setup",
+                "message": f"New setup: {symbol.upper()} {setup_payload['setup']['signal']} at {setup_payload['setup']['entry']:.4f}",
+            }
+        )
+
+    if setup_payload["final_bias"] != setup_payload["technical_bias"]:
+        alerts.append(
+            {
+                "type": "bias_change",
+                "message": (
+                    f"Bias shift: technical {setup_payload['technical_bias'].upper()} "
+                    f"vs news {setup_payload['news_bias'].upper()} -> final {setup_payload['final_bias'].upper()}"
+                ),
+            }
+        )
+
+    upcoming_alerts, released_alerts, sudden_alerts = build_news_alerts(
+        symbol=symbol,
+        events=news_events,
+        current_time=current_time,
+    )
+    for alert in upcoming_alerts + released_alerts + sudden_alerts:
+        alerts.append({"type": "news", "message": alert["message"]})
+
+    return alerts[:10]
