@@ -4,6 +4,7 @@ from typing import Literal
 
 import pandas as pd
 
+from trading_bot.core.ai_engine import build_integrated_ai_decision, predict_signal
 from trading_bot.core.market_structure import detect_market_structure, validate_ohlc_dataframe
 from trading_bot.core.news_engine import combine_biases, derive_news_bias, get_pair_news_bias
 from trading_bot.core.supply_demand import detect_supply_demand_zones
@@ -20,6 +21,7 @@ def generate_trade_setup(
     zone_tolerance_ratio: float = 0.0025,
     news_events: list | None = None,
     current_time=None,
+    use_ai: bool = False,
 ) -> dict:
     """
     Generate a simple rule-based setup from trend and zone interaction.
@@ -80,7 +82,7 @@ def generate_trade_setup(
                 risk_reward_ratio=risk_reward_ratio,
             )
 
-    return {
+    payload = {
         "symbol": symbol.upper(),
         "timeframe": timeframe,
         "trend": structure["trend"],
@@ -100,6 +102,22 @@ def generate_trade_setup(
             for currency, signal in news_bias_by_currency.items()
         },
     }
+
+    if not use_ai:
+        return payload
+
+    try:
+        ai_result = predict_signal(
+            dataframe=dataframe,
+            symbol=symbol,
+            timeframe=timeframe,
+            strategy_bias=payload["final_bias"],
+            news_events=news_events or [],
+        )
+    except Exception:
+        ai_result = None
+
+    return build_integrated_ai_decision(payload, ai_result)
 
 
 def _find_active_zone(

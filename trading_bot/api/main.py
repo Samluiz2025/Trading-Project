@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
@@ -10,6 +11,7 @@ from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
+from trading_bot.core.ai_engine import get_model_status, predict_signal, train_model
 from trading_bot.core.data_fetcher import DataFetchError, FetchConfig, fetch_ohlc
 from trading_bot.core.market_structure import detect_market_structure
 from trading_bot.core.news_engine import (
@@ -81,6 +83,7 @@ def get_frontend_data(
             timeframe=interval,
             news_events=news_events,
             current_time=current_time,
+            use_ai=True,
         )
         alerts = _build_frontend_alerts(
             symbol=symbol,
@@ -100,11 +103,99 @@ def get_frontend_data(
         "news_bias": setup_payload["news_bias"],
         "final_bias": setup_payload["final_bias"],
         "confidence": setup_payload["confidence"],
+        "ai_prediction": setup_payload.get("ai_prediction", "NO TRADE"),
+        "ai_confidence": setup_payload.get("ai_confidence", 0),
+        "agreement_with_strategy": setup_payload.get("agreement_with_strategy", False),
         "latest_price": setup_payload["latest_price"],
         "setups": setup_list,
         "zones": zones,
         "alerts": alerts,
     }
+
+
+@app.get("/train")
+def train_ai_model(
+    symbol: str = Query(default="EURUSD", description="Instrument symbol."),
+    interval: str = Query(default="15m", description="Candle interval."),
+    limit: int = Query(default=500, ge=100, le=5000, description="Number of candles."),
+    source: DataSource = Query(default="auto", description="OHLC data source."),
+) -> dict:
+    """Train the lightweight AI model from historical OHLC data."""
+
+    try:
+        candles = fetch_ohlc(
+            FetchConfig(
+                symbol=symbol,
+                interval=interval,
+                limit=limit,
+                source=source,
+            )
+        )
+        news_provider = _load_default_news_provider()
+        news_events = fetch_market_moving_events(
+            provider=news_provider,
+            currencies=list(split_symbol_currencies(symbol)),
+            current_time=datetime.now(UTC),
+        )
+        return train_model(
+            dataframe=candles,
+            symbol=symbol,
+            timeframe=interval,
+            news_events=news_events,
+        )
+    except (DataFetchError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/predict")
+def predict_ai_signal(
+    symbol: str = Query(default="EURUSD", description="Instrument symbol."),
+    interval: str = Query(default="15m", description="Candle interval."),
+    limit: int = Query(default=250, ge=50, le=2000, description="Number of candles."),
+    source: DataSource = Query(default="auto", description="OHLC data source."),
+) -> dict:
+    """Predict BUY / SELL / NO TRADE from the AI model."""
+
+    try:
+        candles = fetch_ohlc(
+            FetchConfig(
+                symbol=symbol,
+                interval=interval,
+                limit=limit,
+                source=source,
+            )
+        )
+        news_provider = _load_default_news_provider()
+        current_time = datetime.now(UTC)
+        news_events = fetch_market_moving_events(
+            provider=news_provider,
+            currencies=list(split_symbol_currencies(symbol)),
+            current_time=current_time,
+        )
+        strategy_payload = generate_trade_setup(
+            candles,
+            symbol=symbol,
+            timeframe=interval,
+            news_events=news_events,
+            current_time=current_time,
+        )
+        result = predict_signal(
+            dataframe=candles,
+            symbol=symbol,
+            timeframe=interval,
+            strategy_bias=strategy_payload["final_bias"],
+            news_events=news_events,
+        )
+        return asdict(result)
+    except (DataFetchError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/status")
+def ai_status() -> dict:
+    """Return model availability and current performance metrics."""
+
+    return asdict(get_model_status())
 
 
 @app.get("/bias")
