@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 
 from trading_bot.core.alert_engine import MonitorConfig, run_monitoring_loop
+from trading_bot.core.news_engine import JsonEconomicCalendarProvider
 
 
 def parse_args() -> argparse.Namespace:
@@ -37,6 +38,11 @@ def parse_args() -> argparse.Namespace:
         default=60,
         help="Polling interval in seconds.",
     )
+    parser.add_argument(
+        "--news-calendar",
+        default=None,
+        help="Optional path to a local economic calendar JSON file.",
+    )
     return parser.parse_args()
 
 
@@ -53,10 +59,12 @@ def main() -> None:
         )
         for symbol in args.symbols
     ]
+    news_provider = JsonEconomicCalendarProvider(args.news_calendar) if args.news_calendar else None
 
     run_monitoring_loop(
         monitor_configs=monitor_configs,
         poll_interval_seconds=args.poll_seconds,
+        news_provider=news_provider,
     )
 
 

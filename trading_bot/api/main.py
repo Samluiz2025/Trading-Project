@@ -29,7 +29,7 @@ def root() -> dict:
 
     return {
         "message": "Trading Intelligence System API is running.",
-        "endpoints": ["/bias", "/zones", "/setup", "/chart", "/chart_data", "/docs", "/health"],
+        "endpoints": ["/bias", "/zones", "/setup", "/chart", "/chart_data", "/tradingview", "/docs", "/health"],
     }
 
 
@@ -749,6 +749,572 @@ def get_chart(
                 width: document.getElementById("chart-container").clientWidth,
                 height: document.getElementById("chart-container").clientHeight,
             }});
+        }});
+    </script>
+</body>
+</html>
+    """
+
+    return HTMLResponse(content=html)
+
+
+@app.get("/tradingview", response_class=HTMLResponse)
+def get_tradingview_page(
+    symbol: str = Query(default="BINANCE:BTCUSDT", description="TradingView symbol."),
+    interval: str = Query(default="60", description="TradingView interval."),
+    backend_symbol: str = Query(default="BTCUSDT", description="Backend analysis symbol."),
+    backend_interval: str = Query(default="1h", description="Backend candle interval."),
+    source: DataSource = Query(default="auto", description="Backend OHLC data source."),
+) -> HTMLResponse:
+    """Render a TradingView widget page with your backend analysis beside it."""
+
+    analysis_payload = get_chart_data(
+        symbol=backend_symbol,
+        interval=backend_interval,
+        limit=120,
+        source=source,
+    )
+    analysis_json = json.dumps(analysis_payload)
+
+    html = f"""
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>TradingView Dashboard</title>
+    <style>
+        :root {{
+            --bg: #0e151c;
+            --panel: #16212c;
+            --panel-2: #22303d;
+            --text: #ebf1f6;
+            --muted: #9fb1bf;
+            --green: #2ecc71;
+            --red: #ff6b6b;
+            --amber: #f5b041;
+            --border: #2b3b49;
+        }}
+        * {{
+            box-sizing: border-box;
+        }}
+        body {{
+            margin: 0;
+            font-family: "Segoe UI", Tahoma, sans-serif;
+            background:
+                radial-gradient(circle at top left, rgba(52, 152, 219, 0.08), transparent 28%),
+                radial-gradient(circle at bottom right, rgba(46, 204, 113, 0.08), transparent 22%),
+                var(--bg);
+            color: var(--text);
+        }}
+        .page {{
+            max-width: 1480px;
+            margin: 0 auto;
+            padding: 24px;
+        }}
+        .hero {{
+            display: flex;
+            justify-content: space-between;
+            gap: 20px;
+            flex-wrap: wrap;
+            margin-bottom: 18px;
+            padding: 20px;
+            border-radius: 18px;
+            border: 1px solid var(--border);
+            background: linear-gradient(135deg, rgba(34, 48, 61, 0.96), rgba(22, 33, 44, 0.96));
+        }}
+        .hero h1 {{
+            margin: 0 0 6px;
+            font-size: 30px;
+        }}
+        .hero p {{
+            margin: 0;
+            color: var(--muted);
+            max-width: 760px;
+        }}
+        .controls {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-bottom: 18px;
+        }}
+        .control {{
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+            padding: 14px;
+            border-radius: 14px;
+            border: 1px solid var(--border);
+            background: var(--panel);
+        }}
+        label {{
+            color: var(--muted);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }}
+        input, select, button {{
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            font-size: 14px;
+        }}
+        input, select {{
+            padding: 10px 12px;
+            background: var(--panel-2);
+            color: var(--text);
+        }}
+        button {{
+            padding: 12px 16px;
+            background: linear-gradient(135deg, #2ecc71, #27ae60);
+            color: #08140d;
+            font-weight: 700;
+            cursor: pointer;
+        }}
+        .layout {{
+            display: grid;
+            grid-template-columns: minmax(0, 2.3fr) minmax(320px, 1fr);
+            gap: 18px;
+        }}
+        .panel {{
+            border-radius: 18px;
+            border: 1px solid var(--border);
+            background: rgba(22, 33, 44, 0.97);
+            overflow: hidden;
+        }}
+        .panel-header {{
+            padding: 16px 18px;
+            border-bottom: 1px solid var(--border);
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            gap: 10px;
+        }}
+        .panel-title {{
+            font-size: 18px;
+            font-weight: 700;
+        }}
+        .trend {{
+            padding: 6px 10px;
+            border-radius: 999px;
+            font-size: 12px;
+            font-weight: 700;
+            text-transform: uppercase;
+        }}
+        .trend.bullish {{
+            background: rgba(46, 204, 113, 0.18);
+            color: var(--green);
+        }}
+        .trend.bearish {{
+            background: rgba(255, 107, 107, 0.16);
+            color: var(--red);
+        }}
+        .trend.ranging {{
+            background: rgba(245, 176, 65, 0.16);
+            color: var(--amber);
+        }}
+        #tv-widget {{
+            height: 760px;
+        }}
+        .sidebar {{
+            display: grid;
+            gap: 18px;
+        }}
+        .metrics {{
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            gap: 10px;
+            padding: 16px;
+        }}
+        .metric {{
+            padding: 14px;
+            border-radius: 14px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+        }}
+        .metric-label {{
+            color: var(--muted);
+            font-size: 12px;
+            margin-bottom: 6px;
+        }}
+        .metric-value {{
+            font-size: 16px;
+            font-weight: 700;
+        }}
+        .list {{
+            padding: 16px;
+            display: grid;
+            gap: 10px;
+            max-height: 280px;
+            overflow: auto;
+        }}
+        .list-item {{
+            padding: 12px;
+            border-radius: 12px;
+            background: rgba(255, 255, 255, 0.03);
+            border: 1px solid rgba(255, 255, 255, 0.04);
+        }}
+        .list-item strong {{
+            display: block;
+            margin-bottom: 4px;
+        }}
+        .muted {{
+            color: var(--muted);
+        }}
+        .hint {{
+            margin-top: 6px;
+            color: var(--muted);
+            font-size: 12px;
+        }}
+        .empty {{
+            padding: 16px;
+            color: var(--muted);
+        }}
+        @media (max-width: 980px) {{
+            .layout {{
+                grid-template-columns: 1fr;
+            }}
+            #tv-widget {{
+                height: 540px;
+            }}
+        }}
+    </style>
+</head>
+<body>
+    <div class="page">
+        <section class="hero">
+            <div>
+                <h1>TradingView + Backend Intelligence</h1>
+                <p>
+                    TradingView handles the chart rendering while your own backend supplies
+                    trend, zones, and trade setup logic beside it.
+                </p>
+            </div>
+            <div class="muted">
+                Example symbols: BINANCE:BTCUSDT, OANDA:XAUUSD, FX:EURUSD, CAPITALCOM:US100
+            </div>
+        </section>
+
+        <section class="controls">
+            <div class="control">
+                <label for="tv-symbol-input">TradingView Symbol</label>
+                <input id="tv-symbol-input" list="tradingview-symbol-list" value="{symbol}" placeholder="BINANCE:BTCUSDT">
+                <datalist id="tradingview-symbol-list">
+                    <option value="BINANCE:BTCUSDT"></option>
+                    <option value="BINANCE:ETHUSDT"></option>
+                    <option value="BINANCE:SOLUSDT"></option>
+                    <option value="BINANCE:BNBUSDT"></option>
+                    <option value="BINANCE:XRPUSDT"></option>
+                    <option value="BINANCE:ADAUSDT"></option>
+                    <option value="BINANCE:DOGEUSDT"></option>
+                    <option value="FX:EURUSD"></option>
+                    <option value="FX:GBPUSD"></option>
+                    <option value="FX:USDJPY"></option>
+                    <option value="FX:AUDUSD"></option>
+                    <option value="FX:USDCAD"></option>
+                    <option value="OANDA:XAUUSD"></option>
+                    <option value="OANDA:USOIL"></option>
+                    <option value="CAPITALCOM:US500"></option>
+                    <option value="CAPITALCOM:US100"></option>
+                    <option value="CAPITALCOM:US30"></option>
+                    <option value="CAPITALCOM:UK100"></option>
+                    <option value="CAPITALCOM:GER40"></option>
+                    <option value="CAPITALCOM:JPN225"></option>
+                </datalist>
+                <div class="hint">Suggestions appear while typing. Chart symbol used only by TradingView.</div>
+            </div>
+            <div class="control">
+                <label for="tv-interval-select">TradingView Interval</label>
+                <select id="tv-interval-select">
+                    <option value="15">15m</option>
+                    <option value="60">1h</option>
+                    <option value="240">4h</option>
+                    <option value="1D">1D</option>
+                </select>
+            </div>
+            <div class="control">
+                <label for="backend-symbol-input">Backend Symbol</label>
+                <input id="backend-symbol-input" list="backend-symbol-list" value="{backend_symbol}" placeholder="BTCUSDT">
+                <datalist id="backend-symbol-list">
+                    <option value="BTCUSDT"></option>
+                    <option value="ETHUSDT"></option>
+                    <option value="SOLUSDT"></option>
+                    <option value="BNBUSDT"></option>
+                    <option value="XRPUSDT"></option>
+                    <option value="ADAUSDT"></option>
+                    <option value="DOGEUSDT"></option>
+                    <option value="EURUSD"></option>
+                    <option value="GBPUSD"></option>
+                    <option value="USDJPY"></option>
+                    <option value="AUDUSD"></option>
+                    <option value="USDCAD"></option>
+                    <option value="XAUUSD"></option>
+                    <option value="USOIL"></option>
+                    <option value="SPX"></option>
+                    <option value="NAS100"></option>
+                    <option value="DJI"></option>
+                    <option value="GER40"></option>
+                    <option value="UK100"></option>
+                    <option value="JP225"></option>
+                </datalist>
+                <div class="hint">Suggestions appear while typing. Used for your own analysis endpoints.</div>
+            </div>
+            <div class="control">
+                <label for="backend-interval-select">Backend Interval</label>
+                <select id="backend-interval-select">
+                    <option value="15m">15m</option>
+                    <option value="1h">1h</option>
+                    <option value="4h">4h</option>
+                    <option value="1d">1d</option>
+                </select>
+            </div>
+            <div class="control">
+                <label for="backend-source-select">Backend Source</label>
+                <select id="backend-source-select">
+                    <option value="auto">auto</option>
+                    <option value="binance">binance</option>
+                    <option value="yfinance">yfinance</option>
+                    <option value="stooq">stooq</option>
+                    <option value="oanda">oanda</option>
+                    <option value="alphavantage">alphavantage</option>
+                    <option value="twelvedata">twelvedata</option>
+                    <option value="mock">mock</option>
+                </select>
+            </div>
+            <div class="control">
+                <label>Actions</label>
+                <button type="button" onclick="applyDashboard()">Update View</button>
+            </div>
+        </section>
+
+        <section class="layout">
+            <div class="panel">
+                <div class="panel-header">
+                    <div class="panel-title" id="chart-title">TradingView Chart</div>
+                    <div id="trend-badge" class="trend">trend</div>
+                </div>
+                <div id="tv-widget"></div>
+            </div>
+
+            <div class="sidebar">
+                <div class="panel">
+                    <div class="panel-header">
+                        <div class="panel-title">Backend Snapshot</div>
+                    </div>
+                    <div class="metrics">
+                        <div class="metric">
+                            <div class="metric-label">Symbol</div>
+                            <div class="metric-value" id="metric-symbol">-</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Interval</div>
+                            <div class="metric-value" id="metric-interval">-</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Source</div>
+                            <div class="metric-value" id="metric-source">-</div>
+                        </div>
+                        <div class="metric">
+                            <div class="metric-label">Latest Price</div>
+                            <div class="metric-value" id="metric-price">-</div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">
+                        <div class="panel-title">Trade Setup</div>
+                    </div>
+                    <div id="setup-container" class="list"></div>
+                </div>
+
+                <div class="panel">
+                    <div class="panel-header">
+                        <div class="panel-title">Detected Zones</div>
+                    </div>
+                    <div id="zones-container" class="list"></div>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script src="https://s3.tradingview.com/tv.js"></script>
+    <script>
+        const initialAnalysis = {analysis_json};
+        document.getElementById("tv-interval-select").value = "{interval}";
+        document.getElementById("backend-interval-select").value = "{backend_interval}";
+        document.getElementById("backend-source-select").value = "{source}";
+
+        let widget = null;
+
+        function formatNumber(value) {{
+            return typeof value === "number" ? value.toFixed(4) : "-";
+        }}
+
+        function renderTradingViewWidget() {{
+            const tvSymbol = document.getElementById("tv-symbol-input").value.trim();
+            const tvInterval = document.getElementById("tv-interval-select").value;
+            document.getElementById("chart-title").textContent = `TradingView: ${{tvSymbol}}`;
+            document.getElementById("tv-widget").innerHTML = "";
+
+            widget = new TradingView.widget({{
+                autosize: true,
+                symbol: tvSymbol,
+                interval: tvInterval,
+                timezone: "Etc/UTC",
+                theme: "dark",
+                style: "1",
+                locale: "en",
+                enable_publishing: false,
+                hide_top_toolbar: false,
+                allow_symbol_change: true,
+                container_id: "tv-widget"
+            }});
+        }}
+
+        function inferBackendSettingsFromTradingView(tvSymbol) {{
+            const normalized = tvSymbol.trim().toUpperCase();
+            if (!normalized.includes(":")) {{
+                return null;
+            }}
+
+            const [provider, rawSymbol] = normalized.split(":", 2);
+            const compactSymbol = rawSymbol.replace("/", "").replace("_", "");
+
+            const providerDefaults = {{
+                "BINANCE": "binance",
+                "BYBIT": "binance",
+                "KUCOIN": "binance",
+                "COINBASE": "yfinance",
+                "FX": "yfinance",
+                "OANDA": "oanda",
+                "FOREXCOM": "yfinance",
+                "CAPITALCOM": "yfinance",
+                "PEPPERSTONE": "yfinance",
+                "BLACKBULL": "yfinance",
+                "SAXO": "yfinance",
+            }};
+
+            const symbolMappings = {{
+                "US500": "SPX",
+                "SPX500": "SPX",
+                "SPX": "SPX",
+                "US100": "NAS100",
+                "NAS100": "NAS100",
+                "USTEC": "NAS100",
+                "US30": "DJI",
+                "DJI": "DJI",
+                "GER40": "GER40",
+                "DE40": "GER40",
+                "DAX": "GER40",
+                "UK100": "UK100",
+                "JPN225": "JP225",
+                "JP225": "JP225",
+                "XAUUSD": "XAUUSD",
+                "XAU/USD": "XAUUSD",
+                "USOIL": "USOIL",
+                "UKOIL": "BRENT",
+                "WTI": "USOIL",
+                "EURUSD": "EURUSD",
+                "GBPUSD": "GBPUSD",
+                "USDJPY": "USDJPY",
+                "AUDUSD": "AUDUSD",
+                "USDCAD": "USDCAD",
+            }};
+
+            const mappedSymbol = symbolMappings[rawSymbol] || symbolMappings[compactSymbol] || compactSymbol;
+            let mappedSource = providerDefaults[provider] || "auto";
+
+            if (compactSymbol.endsWith("USDT")) {{
+                mappedSource = "binance";
+            }}
+
+            return {{
+                symbol: mappedSymbol,
+                source: mappedSource,
+            }};
+        }}
+
+        function syncBackendInputsFromTradingView() {{
+            const inferred = inferBackendSettingsFromTradingView(
+                document.getElementById("tv-symbol-input").value
+            );
+            if (!inferred) {{
+                return;
+            }}
+
+            document.getElementById("backend-symbol-input").value = inferred.symbol;
+            document.getElementById("backend-source-select").value = inferred.source;
+        }}
+
+        function updateAnalysisPanel(payload) {{
+            document.getElementById("metric-symbol").textContent = payload.symbol;
+            document.getElementById("metric-interval").textContent = payload.interval;
+            document.getElementById("metric-source").textContent = payload.source;
+            document.getElementById("metric-price").textContent = formatNumber(payload.latest_price);
+
+            const trendBadge = document.getElementById("trend-badge");
+            trendBadge.textContent = payload.trend;
+            trendBadge.className = `trend ${{payload.trend}}`;
+
+            const setupContainer = document.getElementById("setup-container");
+            if (!payload.setup) {{
+                setupContainer.innerHTML = '<div class="empty">No active setup at the current price.</div>';
+            }} else {{
+                setupContainer.innerHTML = `
+                    <div class="list-item">
+                        <strong>${{payload.setup.signal}} setup</strong>
+                        <div class="muted">Zone type: ${{payload.setup.zone_type}}</div>
+                        <div>Entry: ${{formatNumber(payload.setup.entry)}}</div>
+                        <div>Stop Loss: ${{formatNumber(payload.setup.stop_loss)}}</div>
+                        <div>Take Profit: ${{formatNumber(payload.setup.take_profit)}}</div>
+                        <div>R:R: ${{payload.setup.risk_reward_ratio}}</div>
+                    </div>
+                `;
+            }}
+
+            const zonesContainer = document.getElementById("zones-container");
+            if (!payload.zones.length) {{
+                zonesContainer.innerHTML = '<div class="empty">No recent zones were detected.</div>';
+            }} else {{
+                zonesContainer.innerHTML = payload.zones
+                    .slice()
+                    .reverse()
+                    .map(zone => `
+                        <div class="list-item">
+                            <strong>${{zone.type.toUpperCase()}} zone</strong>
+                            <div class="muted">${{zone.timeframe}} | ${{zone.symbol}}</div>
+                            <div>Start: ${{formatNumber(zone.start_price)}}</div>
+                            <div>End: ${{formatNumber(zone.end_price)}}</div>
+                        </div>
+                    `)
+                    .join("");
+            }}
+        }}
+
+        async function applyDashboard() {{
+            const backendSymbol = document.getElementById("backend-symbol-input").value.trim();
+            const backendInterval = document.getElementById("backend-interval-select").value;
+            const backendSource = document.getElementById("backend-source-select").value;
+
+            renderTradingViewWidget();
+
+            const response = await fetch(`/chart_data?symbol=${{backendSymbol}}&interval=${{backendInterval}}&limit=120&source=${{backendSource}}`);
+            if (!response.ok) {{
+                const errorPayload = await response.json();
+                alert(errorPayload.detail || "Failed to load backend analysis.");
+                return;
+            }}
+
+            const payload = await response.json();
+            updateAnalysisPanel(payload);
+        }}
+
+        renderTradingViewWidget();
+        syncBackendInputsFromTradingView();
+        updateAnalysisPanel(initialAnalysis);
+
+        document.getElementById("tv-symbol-input").addEventListener("change", () => {{
+            syncBackendInputsFromTradingView();
         }});
     </script>
 </body>

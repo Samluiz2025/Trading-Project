@@ -3,11 +3,17 @@ from __future__ import annotations
 import os
 import time
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 
 import requests
 
 from trading_bot.core.data_fetcher import FetchConfig, fetch_ohlc
 from trading_bot.core.market_structure import detect_market_structure
+from trading_bot.core.news_engine import (
+    EconomicCalendarProvider,
+    build_news_alerts,
+    fetch_market_moving_events,
+)
 from trading_bot.core.strategy_engine import generate_trade_setup
 from trading_bot.core.supply_demand import detect_supply_demand_zones
 
@@ -28,7 +34,11 @@ class AlertState:
 
     last_trend: str | None = None
     last_setup_signature: str | None = None
+    last_final_bias: str | None = None
     active_zone_keys: set[str] = field(default_factory=set)
+    alerted_upcoming_news_keys: set[str] = field(default_factory=set)
+    alerted_released_news_keys: set[str] = field(default_factory=set)
+    alerted_sudden_news_keys: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -39,7 +49,12 @@ class TelegramConfig:
     chat_id: str
 
 
-def monitor_symbol(config: MonitorConfig, state: AlertState | None = None) -> tuple[list[str], AlertState]:
+def monitor_symbol(
+    config: MonitorConfig,
+    state: AlertState | None = None,
+    news_provider: EconomicCalendarProvider | None = None,
+    current_time: datetime | None = None,
+) -> tuple[list[str], AlertState]:
     """
     Evaluate one symbol and return any newly triggered alerts.
 
@@ -49,6 +64,7 @@ def monitor_symbol(config: MonitorConfig, state: AlertState | None = None) -> tu
     """
 
     active_state = state or AlertState()
+    active_time = current_time or datetime.now(UTC)
     candles = fetch_ohlc(
         FetchConfig(
             symbol=config.symbol,
@@ -58,7 +74,18 @@ def monitor_symbol(config: MonitorConfig, state: AlertState | None = None) -> tu
         )
     )
     structure = detect_market_structure(candles)
-    setup_payload = generate_trade_setup(candles, symbol=config.symbol, timeframe=config.interval)
+    news_events = fetch_market_moving_events(
+        provider=news_provider,
+        currencies=list(_get_symbol_currencies(config.symbol)),
+        current_time=active_time,
+    )
+    setup_payload = generate_trade_setup(
+        candles,
+        symbol=config.symbol,
+        timeframe=config.interval,
+        news_events=news_events,
+        current_time=active_time,
+    )
     zones = detect_supply_demand_zones(candles, symbol=config.symbol, timeframe=config.interval)
     current_price = float(candles.iloc[-1]["close"])
 
@@ -88,8 +115,25 @@ def monitor_symbol(config: MonitorConfig, state: AlertState | None = None) -> tu
     )
     alerts.extend(zone_alerts)
 
+    news_alerts = _detect_news_alerts(
+        symbol=config.symbol,
+        news_events=news_events,
+        current_time=active_time,
+        state=active_state,
+    )
+    alerts.extend(news_alerts)
+
+    final_bias_alert = _detect_final_bias_change_alert(
+        symbol=config.symbol,
+        final_bias=setup_payload["final_bias"],
+        state=active_state,
+    )
+    if final_bias_alert is not None:
+        alerts.append(final_bias_alert)
+
     active_state.last_trend = structure["trend"]
     active_state.last_setup_signature = _build_setup_signature(setup_payload["setup"])
+    active_state.last_final_bias = setup_payload["final_bias"]
 
     return alerts, active_state
 
@@ -97,6 +141,7 @@ def monitor_symbol(config: MonitorConfig, state: AlertState | None = None) -> tu
 def run_monitoring_loop(
     monitor_configs: list[MonitorConfig],
     poll_interval_seconds: int = 60,
+    news_provider: EconomicCalendarProvider | None = None,
 ) -> None:
     """Continuously monitor configured symbols and print new alerts."""
 
@@ -113,7 +158,11 @@ def run_monitoring_loop(
         for config in monitor_configs:
             symbol_key = config.symbol.upper()
             try:
-                alerts, next_state = monitor_symbol(config, state_by_symbol[symbol_key])
+                alerts, next_state = monitor_symbol(
+                    config,
+                    state_by_symbol[symbol_key],
+                    news_provider=news_provider,
+                )
                 state_by_symbol[symbol_key] = next_state
                 for alert in alerts:
                     print(alert)
@@ -181,6 +230,16 @@ def _detect_setup_alert(symbol: str, setup: dict | None, state: AlertState) -> s
     return None
 
 
+def _detect_final_bias_change_alert(symbol: str, final_bias: str, state: AlertState) -> str | None:
+    """Alert when news changes the effective trading bias."""
+
+    if state.last_final_bias is None:
+        return None
+    if final_bias != state.last_final_bias:
+        return f"[ALERT] {symbol.upper()} Final bias changed to {final_bias.upper()} due to news/technical shift"
+    return None
+
+
 def _detect_zone_entry_alerts(
     symbol: str,
     zones: list[dict],
@@ -206,6 +265,39 @@ def _detect_zone_entry_alerts(
             )
 
     state.active_zone_keys = current_zone_keys
+    return alerts
+
+
+def _detect_news_alerts(
+    symbol: str,
+    news_events: list,
+    current_time: datetime,
+    state: AlertState,
+) -> list[str]:
+    """Alert for approaching, released, and sudden market-moving news."""
+
+    upcoming_alerts, released_alerts, sudden_alerts = build_news_alerts(
+        symbol=symbol,
+        events=news_events,
+        current_time=current_time,
+    )
+
+    alerts: list[str] = []
+    for alert in upcoming_alerts:
+        if alert["key"] not in state.alerted_upcoming_news_keys:
+            alerts.append(alert["message"])
+            state.alerted_upcoming_news_keys.add(alert["key"])
+
+    for alert in released_alerts:
+        if alert["key"] not in state.alerted_released_news_keys:
+            alerts.append(alert["message"])
+            state.alerted_released_news_keys.add(alert["key"])
+
+    for alert in sudden_alerts:
+        if alert["key"] not in state.alerted_sudden_news_keys:
+            alerts.append(alert["message"])
+            state.alerted_sudden_news_keys.add(alert["key"])
+
     return alerts
 
 
@@ -249,3 +341,32 @@ def _build_zone_key(zone: dict) -> str:
             zone["formed_at"],
         ]
     )
+
+
+def _get_symbol_currencies(symbol: str) -> tuple[str, str]:
+    cleaned = symbol.strip().upper().replace("/", "").replace("_", "").replace("-", "")
+    special_mappings = {
+        "XAUUSD": ("XAU", "USD"),
+        "XAGUSD": ("XAG", "USD"),
+        "USOIL": ("USOIL", "USD"),
+        "UKOIL": ("UKOIL", "USD"),
+        "BRENT": ("BRENT", "USD"),
+        "SPX": ("SPX", "USD"),
+        "NAS100": ("NAS100", "USD"),
+        "DJI": ("DJI", "USD"),
+        "GER40": ("GER40", "EUR"),
+        "UK100": ("UK100", "GBP"),
+        "JP225": ("JP225", "JPY"),
+    }
+    if cleaned in special_mappings:
+        return special_mappings[cleaned]
+
+    quote_candidates = ("USDT", "USDC", "USD", "JPY", "EUR", "GBP", "AUD", "CAD", "CHF", "NZD")
+    for quote_currency in quote_candidates:
+        if cleaned.endswith(quote_currency) and len(cleaned) > len(quote_currency):
+            return cleaned[: -len(quote_currency)], quote_currency
+
+    if len(cleaned) >= 6:
+        return cleaned[:3], cleaned[3:6]
+
+    return cleaned, "USD"

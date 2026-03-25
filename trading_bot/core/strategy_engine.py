@@ -5,6 +5,7 @@ from typing import Literal
 import pandas as pd
 
 from trading_bot.core.market_structure import detect_market_structure, validate_ohlc_dataframe
+from trading_bot.core.news_engine import combine_biases, derive_news_bias, get_pair_news_bias
 from trading_bot.core.supply_demand import detect_supply_demand_zones
 
 
@@ -17,6 +18,8 @@ def generate_trade_setup(
     timeframe: str,
     risk_reward_ratio: float = 2.0,
     zone_tolerance_ratio: float = 0.0025,
+    news_events: list | None = None,
+    current_time=None,
 ) -> dict:
     """
     Generate a simple rule-based setup from trend and zone interaction.
@@ -32,9 +35,21 @@ def generate_trade_setup(
     zones = detect_supply_demand_zones(dataframe, symbol=symbol, timeframe=timeframe)
     latest_candle = dataframe.iloc[-1]
     current_price = float(latest_candle["close"])
+    technical_bias = structure["trend"]
+
+    news_bias_by_currency = derive_news_bias(
+        currencies=list(_get_symbol_currencies(symbol)),
+        events=news_events or [],
+        current_time=current_time,
+    )
+    news_bias = get_pair_news_bias(symbol=symbol, bias_by_currency=news_bias_by_currency)
+    bias_decision = combine_biases(
+        technical_bias=technical_bias,
+        news_bias=news_bias,
+    )
 
     setup: dict | None = None
-    if structure["trend"] == "bullish":
+    if bias_decision.final_bias in {"bullish", "strong bullish"}:
         demand_zone = _find_active_zone(
             zones=zones,
             zone_type="demand",
@@ -49,7 +64,7 @@ def generate_trade_setup(
                 structure=structure,
                 risk_reward_ratio=risk_reward_ratio,
             )
-    elif structure["trend"] == "bearish":
+    elif bias_decision.final_bias in {"bearish", "strong bearish"}:
         supply_zone = _find_active_zone(
             zones=zones,
             zone_type="supply",
@@ -72,6 +87,18 @@ def generate_trade_setup(
         "zones": zones,
         "setup": setup,
         "latest_price": round(current_price, 4),
+        "technical_bias": bias_decision.technical_bias,
+        "news_bias": bias_decision.news_bias,
+        "final_bias": bias_decision.final_bias,
+        "confidence": bias_decision.confidence,
+        "news_bias_by_currency": {
+            currency: {
+                "bias": signal.bias,
+                "driver": signal.driver,
+                "event_time": signal.event_time,
+            }
+            for currency, signal in news_bias_by_currency.items()
+        },
     }
 
 
@@ -150,3 +177,32 @@ def _build_setup(
         "risk_reward_ratio": risk_reward_ratio,
         "zone": zone,
     }
+
+
+def _get_symbol_currencies(symbol: str) -> tuple[str, str]:
+    cleaned = symbol.strip().upper().replace("/", "").replace("_", "").replace("-", "")
+    special_mappings = {
+        "XAUUSD": ("XAU", "USD"),
+        "XAGUSD": ("XAG", "USD"),
+        "USOIL": ("USOIL", "USD"),
+        "UKOIL": ("UKOIL", "USD"),
+        "BRENT": ("BRENT", "USD"),
+        "SPX": ("SPX", "USD"),
+        "NAS100": ("NAS100", "USD"),
+        "DJI": ("DJI", "USD"),
+        "GER40": ("GER40", "EUR"),
+        "UK100": ("UK100", "GBP"),
+        "JP225": ("JP225", "JPY"),
+    }
+    if cleaned in special_mappings:
+        return special_mappings[cleaned]
+
+    quote_candidates = ("USDT", "USDC", "USD", "JPY", "EUR", "GBP", "AUD", "CAD", "CHF", "NZD")
+    for quote_currency in quote_candidates:
+        if cleaned.endswith(quote_currency) and len(cleaned) > len(quote_currency):
+            return cleaned[: -len(quote_currency)], quote_currency
+
+    if len(cleaned) >= 6:
+        return cleaned[:3], cleaned[3:6]
+
+    return cleaned, "USD"
