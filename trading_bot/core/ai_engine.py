@@ -123,6 +123,7 @@ def train_model(
         min_samples_leaf=4,
         random_state=42,
         class_weight="balanced_subsample",
+        n_jobs=1,
     )
     model.fit(X_train, y_train)
 
@@ -307,6 +308,7 @@ def retrain_from_saved_dataset() -> dict[str, Any]:
         min_samples_leaf=4,
         random_state=42,
         class_weight="balanced_subsample",
+        n_jobs=1,
     )
     model.fit(X_train, y_train)
     accuracy = float(accuracy_score(y_test, model.predict(X_test)))

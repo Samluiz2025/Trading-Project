@@ -5,6 +5,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from trading_bot.core.data_fetcher import FetchConfig, fetch_ohlc
+
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
@@ -30,9 +32,10 @@ def ensure_trade_logged(
     entry: float,
     stop_loss: float,
     take_profit: float,
-    confluences: list[str],
+    confluences: list[Any],
     confidence: int,
     timeframe: str,
+    source: str = "auto",
     timeframes_used: list[str] | None = None,
     profit_factor: float | None = None,
 ) -> dict[str, Any] | None:
@@ -58,6 +61,7 @@ def ensure_trade_logged(
         "confluences": confluences,
         "confidence": int(confidence),
         "timeframe": timeframe,
+        "source": source,
         "timeframes_used": timeframes_used or [timeframe],
         "profit_factor": profit_factor,
         "timestamp": datetime.now(UTC).isoformat(),
@@ -105,5 +109,107 @@ def get_recent_journal(limit: int = 20) -> list[dict[str, Any]]:
     return list(reversed(entries[-limit:]))
 
 
+def update_open_trade_outcomes(default_source: str = "auto") -> list[dict[str, Any]]:
+    """
+    Check open journaled trades against the latest candle and close them on TP/SL.
+
+    The resolution is conservative: if both SL and TP are touched in the same
+    candle, the trade is marked as a loss.
+    """
+
+    entries = load_journal_entries()
+    updated_entries: list[dict[str, Any]] = []
+    changed = False
+
+    for entry in entries:
+        if entry.get("status") != "OPEN":
+            continue
+
+        symbol = entry.get("symbol")
+        timeframe = entry.get("timeframe")
+        if not symbol or not timeframe:
+            continue
+
+        try:
+            candles = fetch_ohlc(
+                FetchConfig(
+                    symbol=symbol,
+                    interval=timeframe,
+                    limit=3,
+                    source=entry.get("source", default_source),
+                )
+            )
+        except Exception:
+            continue
+
+        if candles.empty:
+            continue
+
+        latest = candles.iloc[-1]
+        trade_update = _resolve_open_trade(entry, latest)
+        if trade_update is None:
+            continue
+
+        entry.update(trade_update)
+        updated_entries.append(dict(entry))
+        changed = True
+
+    if changed:
+        save_journal_entries(entries)
+
+    return updated_entries
+
+
 def _build_signature(symbol: str, strategy: str, entry: float, timeframe: str) -> str:
     return "|".join([symbol.upper(), strategy, timeframe, f"{entry:.4f}"])
+
+
+def _resolve_open_trade(entry: dict[str, Any], latest_candle) -> dict[str, Any] | None:
+    entry_price = float(entry["entry"])
+    stop_loss = float(entry["stop_loss"])
+    take_profit = float(entry["take_profit"])
+    candle_low = float(latest_candle["low"])
+    candle_high = float(latest_candle["high"])
+    bias = _infer_trade_side(entry)
+
+    if bias == "BUY":
+        stop_hit = candle_low <= stop_loss
+        target_hit = candle_high >= take_profit
+    else:
+        stop_hit = candle_high >= stop_loss
+        target_hit = candle_low <= take_profit
+
+    if not stop_hit and not target_hit:
+        return None
+
+    risk = abs(entry_price - stop_loss)
+    reward = abs(take_profit - entry_price)
+    if risk <= 0:
+        risk = 1.0
+
+    if stop_hit:
+        return {
+            "status": "LOSS",
+            "result": "LOSS",
+            "rr_achieved": round(-1.0, 2),
+            "close_reason": "STOP_LOSS_HIT",
+            "closed_at": datetime.now(UTC).isoformat(),
+        }
+
+    return {
+        "status": "WIN",
+        "result": "WIN",
+        "rr_achieved": round(reward / risk, 2),
+        "close_reason": "TAKE_PROFIT_HIT",
+        "closed_at": datetime.now(UTC).isoformat(),
+    }
+
+
+def _infer_trade_side(entry: dict[str, Any]) -> str:
+    bias = str(entry.get("bias") or "").upper()
+    if bias in {"BUY", "SELL"}:
+        return bias
+
+    entry_price = float(entry["entry"])
+    take_profit = float(entry["take_profit"])
+    return "BUY" if take_profit >= entry_price else "SELL"

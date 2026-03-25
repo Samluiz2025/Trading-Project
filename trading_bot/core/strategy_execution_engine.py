@@ -50,6 +50,14 @@ def evaluate_strict_execution_setup(config: ExecutionConfig) -> dict:
             source=config.source,  # type: ignore[arg-type]
         )
     )
+    h4_candles = fetch_ohlc(
+        FetchConfig(
+            symbol=config.symbol,
+            interval=config.fallback_interval,
+            limit=config.fallback_limit,
+            source=config.source,  # type: ignore[arg-type]
+        )
+    )
     primary_candles = fetch_ohlc(
         FetchConfig(
             symbol=config.symbol,
@@ -58,23 +66,24 @@ def evaluate_strict_execution_setup(config: ExecutionConfig) -> dict:
             source=config.source,  # type: ignore[arg-type]
         )
     )
-    fallback_candles = fetch_ohlc(
+    m15_candles = fetch_ohlc(
         FetchConfig(
             symbol=config.symbol,
-            interval=config.fallback_interval,
-            limit=config.fallback_limit,
+            interval="15m",
+            limit=max(config.primary_limit, 320),
             source=config.source,  # type: ignore[arg-type]
         )
     )
 
     validate_ohlc_dataframe(daily_candles)
+    validate_ohlc_dataframe(h4_candles)
     validate_ohlc_dataframe(primary_candles)
-    validate_ohlc_dataframe(fallback_candles)
+    validate_ohlc_dataframe(m15_candles)
 
     daily_bias = detect_bias(daily_candles)
     daily_zones = detect_supply_demand_zones(daily_candles, symbol=config.symbol, timeframe=config.daily_interval)
     h1_bias = detect_bias(primary_candles)
-    h4_bias = detect_bias(fallback_candles)
+    h4_bias = detect_bias(h4_candles)
     execution_timeframe = config.primary_interval
     execution_candles = primary_candles
     execution_bias = h1_bias
@@ -82,7 +91,7 @@ def evaluate_strict_execution_setup(config: ExecutionConfig) -> dict:
     if not _biases_align(daily_bias["bias"], h1_bias["bias"]):
         if _biases_align(daily_bias["bias"], h4_bias["bias"]):
             execution_timeframe = config.fallback_interval
-            execution_candles = fallback_candles
+            execution_candles = h4_candles
             execution_bias = h4_bias
         else:
             return _build_no_setup_payload(
@@ -94,27 +103,55 @@ def evaluate_strict_execution_setup(config: ExecutionConfig) -> dict:
                 fallback_bias=h4_bias,
             )
 
-    mss_result = detect_mss(execution_candles)
-    bos_result = detect_bos(execution_candles, minimum_breaks=config.bos_confirmation_count)
+    structure_result = detect_mss_bos(
+        m15_candles,
+        tf="15m",
+        minimum_breaks=config.bos_confirmation_count,
+    )
+    if not structure_result["confirmed"]:
+        structure_result = detect_mss_bos(
+            execution_candles,
+            tf=execution_timeframe,
+            minimum_breaks=config.bos_confirmation_count,
+        )
+
     liquidity_result = detect_liquidity(
-        execution_candles,
+        m15_candles,
+        tf="15m",
         tolerance_ratio=config.equal_level_tolerance_ratio,
     )
-    inducement_result = detect_inducement(execution_candles)
-    order_block_result = detect_order_block(
-        execution_candles,
+    if not liquidity_result["confirmed"]:
+        liquidity_result = detect_liquidity(
+            execution_candles,
+            tf=execution_timeframe,
+            tolerance_ratio=config.equal_level_tolerance_ratio,
+        )
+
+    inducement_result = detect_inducement(m15_candles, tf="15m")
+    if not inducement_result["confirmed"]:
+        inducement_result = detect_inducement(execution_candles, tf=execution_timeframe)
+
+    order_block_result = _pick_first_confirmed_block(
         symbol=config.symbol,
-        timeframe=execution_timeframe,
+        candidates=[
+            ("15m", m15_candles),
+            (execution_timeframe, execution_candles),
+            (config.fallback_interval, h4_candles),
+        ],
     )
     breaker_block_result = detect_breaker_block(
-        execution_candles,
+        m15_candles if order_block_result.get("tf") == "15m" else execution_candles,
         order_block_result=order_block_result,
     )
     active_block = breaker_block_result if breaker_block_result["confirmed"] else order_block_result
-    fvg_result = detect_fvg(
-        execution_candles,
+    fvg_result = _pick_first_confirmed_fvg(
         anchor_zone=active_block["zone"],
         max_distance_ratio=config.fvg_ob_distance_ratio,
+        candidates=[
+            ("15m", m15_candles),
+            (execution_timeframe, execution_candles),
+            (config.fallback_interval, h4_candles),
+        ],
     )
 
     directional_bias = daily_bias["bias"]
@@ -122,14 +159,18 @@ def evaluate_strict_execution_setup(config: ExecutionConfig) -> dict:
         bias=directional_bias,
         block_result=active_block,
         fvg_result=fvg_result,
-        daily_zones=daily_zones,
-        execution_candles=execution_candles,
+        high_tf_data=[
+            {"tf": "Daily", "dataframe": daily_candles},
+            {"tf": "H4", "dataframe": h4_candles},
+            {"tf": "H1", "dataframe": primary_candles},
+        ],
+        execution_candles=m15_candles,
         atr_period=config.atr_period,
         tp_atr_multiplier=config.tp_atr_multiplier,
     )
 
     all_conditions = [
-        mss_result["confirmed"] or bos_result["confirmed"],
+        structure_result["confirmed"],
         liquidity_result["confirmed"],
         inducement_result["confirmed"],
         active_block["confirmed"],
@@ -141,12 +182,12 @@ def evaluate_strict_execution_setup(config: ExecutionConfig) -> dict:
         candle=execution_candles.iloc[-1],
         entry=entry_model["entry"],
     )
+    current_price = float(execution_candles.iloc[-1]["close"])
 
     confluences = _build_confluences(
         bias=directional_bias,
         execution_timeframe=execution_timeframe,
-        mss_result=mss_result,
-        bos_result=bos_result,
+        structure_result=structure_result,
         liquidity_result=liquidity_result,
         inducement_result=inducement_result,
         block_result=active_block,
@@ -157,7 +198,7 @@ def evaluate_strict_execution_setup(config: ExecutionConfig) -> dict:
     confidence = _compute_confidence(
         all_conditions=all_conditions,
         price_reached_entry=price_reached_entry,
-        bos_count=bos_result["bos_count"],
+        bos_count=structure_result["bos_count"],
         block_score=active_block["quality_score"],
     )
 
@@ -176,8 +217,9 @@ def evaluate_strict_execution_setup(config: ExecutionConfig) -> dict:
             confidence=confidence,
             extra_details={
                 "execution_timeframe": execution_timeframe,
-                "mss": mss_result,
-                "bos": bos_result,
+                "current_price": current_price,
+                "mss": {"confirmed": structure_result["mss_confirmed"], "signal": structure_result["signal"], "tf": structure_result["tf"]},
+                "bos": {"confirmed": structure_result["bos_confirmed"], "bos_count": structure_result["bos_count"], "signal": structure_result["signal"], "tf": structure_result["tf"]},
                 "liquidity": liquidity_result,
                 "inducement": inducement_result,
                 "order_block": order_block_result,
@@ -197,14 +239,15 @@ def evaluate_strict_execution_setup(config: ExecutionConfig) -> dict:
         "tp": entry_model["tp"],
         "confluences": confluences,
         "confidence": confidence,
+        "current_price": current_price,
         "daily_bias": daily_bias,
         "primary_bias": execution_bias,
         "fallback_bias": h4_bias,
         "execution_timeframe": execution_timeframe,
         "daily_zones": daily_zones[-4:],
         "details": {
-            "mss": mss_result,
-            "bos": bos_result,
+            "mss": {"confirmed": structure_result["mss_confirmed"], "signal": structure_result["signal"], "tf": structure_result["tf"]},
+            "bos": {"confirmed": structure_result["bos_confirmed"], "bos_count": structure_result["bos_count"], "signal": structure_result["signal"], "tf": structure_result["tf"]},
             "liquidity": liquidity_result,
             "inducement": inducement_result,
             "order_block": order_block_result,
@@ -212,6 +255,7 @@ def evaluate_strict_execution_setup(config: ExecutionConfig) -> dict:
             "active_block": active_block,
             "fvg": fvg_result,
             "price_reached_entry": price_reached_entry,
+            "tp_timeframe": entry_model["tp_timeframe"],
         },
     }
 
@@ -230,20 +274,21 @@ def detect_bias(dataframe: pd.DataFrame) -> dict:
     }
 
 
-def detect_mss(dataframe: pd.DataFrame) -> dict:
+def detect_mss(dataframe: pd.DataFrame, tf: str) -> dict:
     signals = detect_mss_signals(dataframe)
     latest = signals[-1] if signals else None
     return {
         "confirmed": latest is not None,
         "signal": latest.signal if latest else None,
         "time": latest.time if latest else None,
+        "tf": tf,
     }
 
 
-def detect_bos(dataframe: pd.DataFrame, minimum_breaks: int = 2) -> dict:
+def detect_bos(dataframe: pd.DataFrame, tf: str, minimum_breaks: int = 2) -> dict:
     signals = detect_bos_signals(dataframe)
     if not signals:
-        return {"confirmed": False, "signal": None, "bos_count": 0, "time": None}
+        return {"confirmed": False, "signal": None, "bos_count": 0, "time": None, "tf": tf}
 
     latest_signal = signals[-1].signal
     consecutive = 0
@@ -257,10 +302,11 @@ def detect_bos(dataframe: pd.DataFrame, minimum_breaks: int = 2) -> dict:
         "signal": latest_signal,
         "bos_count": consecutive,
         "time": signals[-1].time,
+        "tf": tf,
     }
 
 
-def detect_liquidity(dataframe: pd.DataFrame, tolerance_ratio: float = 0.0008) -> dict:
+def detect_liquidity(dataframe: pd.DataFrame, tf: str, tolerance_ratio: float = 0.0008) -> dict:
     sweeps = detect_liquidity_sweep_signals(dataframe)
     equal_levels = _detect_equal_highs_lows(dataframe, tolerance_ratio=tolerance_ratio)
     latest_sweep = sweeps[-1] if sweeps else None
@@ -269,13 +315,14 @@ def detect_liquidity(dataframe: pd.DataFrame, tolerance_ratio: float = 0.0008) -
         "signal": latest_sweep.signal if latest_sweep else None,
         "sweep_time": latest_sweep.time if latest_sweep else None,
         "equal_levels": equal_levels[-4:],
+        "tf": tf,
     }
 
 
-def detect_inducement(dataframe: pd.DataFrame) -> dict:
+def detect_inducement(dataframe: pd.DataFrame, tf: str) -> dict:
     swings = detect_swings(dataframe, swing_window=2)
     if len(swings) < 4:
-        return {"confirmed": False, "trap_side": None, "levels": []}
+        return {"confirmed": False, "trap_side": None, "levels": [], "tf": tf}
 
     recent = swings[-4:]
     levels: list[float] = []
@@ -302,13 +349,18 @@ def detect_inducement(dataframe: pd.DataFrame) -> dict:
         "confirmed": confirmed,
         "trap_side": trap_side,
         "levels": levels,
+        "tf": tf,
     }
+
+
+def detect_ob(dataframe: pd.DataFrame, tf: str, symbol: str) -> dict:
+    return detect_order_block(dataframe, symbol=symbol, timeframe=tf)
 
 
 def detect_order_block(dataframe: pd.DataFrame, symbol: str, timeframe: str) -> dict:
     signals = detect_order_block_signals(dataframe, symbol=symbol, timeframe=timeframe)
     if not signals:
-        return {"confirmed": False, "signal": None, "zone": None, "quality_score": 0}
+        return {"confirmed": False, "signal": None, "zone": None, "quality_score": 0, "tf": timeframe}
 
     candidates = []
     average_range = float((dataframe["high"] - dataframe["low"]).mean())
@@ -324,7 +376,7 @@ def detect_order_block(dataframe: pd.DataFrame, symbol: str, timeframe: str) -> 
             candidates.append((quality_score, signal))
 
     if not candidates:
-        return {"confirmed": False, "signal": None, "zone": None, "quality_score": 0}
+        return {"confirmed": False, "signal": None, "zone": None, "quality_score": 0, "tf": timeframe}
 
     quality_score, best_signal = max(candidates, key=lambda item: item[0])
     zone = dict(best_signal.metadata)
@@ -339,13 +391,14 @@ def detect_order_block(dataframe: pd.DataFrame, symbol: str, timeframe: str) -> 
         "zone": zone,
         "block_type": block_type,
         "quality_score": int(round(quality_score * 100)),
+        "tf": timeframe,
     }
 
 
 def detect_breaker_block(dataframe: pd.DataFrame, order_block_result: dict) -> dict:
     zone = order_block_result.get("zone")
     if not zone:
-        return {"confirmed": False, "signal": None, "zone": None, "block_type": "BB", "quality_score": 0}
+        return {"confirmed": False, "signal": None, "zone": None, "block_type": "BB", "quality_score": 0, "tf": order_block_result.get("tf")}
 
     last_close = float(dataframe.iloc[-1]["close"])
     zone_low = min(zone["start_price"], zone["end_price"])
@@ -360,6 +413,7 @@ def detect_breaker_block(dataframe: pd.DataFrame, order_block_result: dict) -> d
             "zone": flipped_zone,
             "block_type": "BB",
             "quality_score": max(55, order_block_result.get("quality_score", 0)),
+            "tf": order_block_result.get("tf"),
         }
     if block_signal == "SELL" and last_close > zone_high:
         flipped_zone = {**zone, "type": "demand"}
@@ -369,18 +423,19 @@ def detect_breaker_block(dataframe: pd.DataFrame, order_block_result: dict) -> d
             "zone": flipped_zone,
             "block_type": "BB",
             "quality_score": max(55, order_block_result.get("quality_score", 0)),
+            "tf": order_block_result.get("tf"),
         }
 
-    return {"confirmed": False, "signal": None, "zone": None, "block_type": "BB", "quality_score": 0}
+    return {"confirmed": False, "signal": None, "zone": None, "block_type": "BB", "quality_score": 0, "tf": order_block_result.get("tf")}
 
 
-def detect_fvg(dataframe: pd.DataFrame, anchor_zone: dict | None, max_distance_ratio: float = 0.003) -> dict:
+def detect_fvg(dataframe: pd.DataFrame, tf: str, anchor_zone: dict | None, max_distance_ratio: float = 0.003) -> dict:
     if anchor_zone is None:
-        return {"confirmed": False, "signal": None, "gap": None}
+        return {"confirmed": False, "signal": None, "gap": None, "tf": tf}
 
     signals = detect_fvg_signals(dataframe)
     if not signals:
-        return {"confirmed": False, "signal": None, "gap": None}
+        return {"confirmed": False, "signal": None, "gap": None, "tf": tf}
 
     zone_mid = _zone_midpoint(anchor_zone)
     for signal in reversed(signals):
@@ -396,16 +451,36 @@ def detect_fvg(dataframe: pd.DataFrame, anchor_zone: dict | None, max_distance_r
                     "time": signal.time,
                     "metadata": signal.metadata,
                 },
+                "tf": tf,
             }
 
-    return {"confirmed": False, "signal": None, "gap": None}
+    return {"confirmed": False, "signal": None, "gap": None, "tf": tf}
+
+
+def _pick_first_confirmed_block(symbol: str, candidates: list[tuple[str, pd.DataFrame]]) -> dict:
+    for tf, dataframe in candidates:
+        result = detect_ob(dataframe, tf=tf, symbol=symbol)
+        if result["confirmed"]:
+            return result
+    return {"confirmed": False, "signal": None, "zone": None, "quality_score": 0, "block_type": "OB", "tf": None}
+
+
+def _pick_first_confirmed_fvg(anchor_zone: dict | None, max_distance_ratio: float, candidates: list[tuple[str, pd.DataFrame]]) -> dict:
+    for tf, dataframe in candidates:
+        result = detect_fvg(dataframe, tf=tf, anchor_zone=anchor_zone, max_distance_ratio=max_distance_ratio)
+        if result["confirmed"]:
+            return result
+    return {"confirmed": False, "signal": None, "gap": None, "tf": None}
 
 
 def format_high_setup_alert(result: dict) -> str | None:
     if result.get("setup") != "HIGH_PROBABILITY":
         return None
 
-    confluences = "\n".join(f"- {item}" for item in result.get("confluences", []))
+    confluences = "\n".join(
+        f"- {item['type']} ({item['tf']})"
+        for item in result.get("confluences", [])
+    )
     return (
         "[HIGH SETUP]\n"
         f"Pair: {result['pair']}\n"
@@ -418,18 +493,158 @@ def format_high_setup_alert(result: dict) -> str | None:
     )
 
 
+def generate_alert_with_tf_info(result: dict) -> dict:
+    return {
+        "pair": result["pair"],
+        "bias": result["bias"],
+        "entry": result["entry"],
+        "stop_loss": result["sl"],
+        "take_profit": result["tp"],
+        "tp_timeframe": result.get("details", {}).get("tp_timeframe"),
+        "confluences": result["confluences"],
+        "confidence": result["confidence"],
+        "timestamp": datetime.now(UTC).isoformat(),
+    }
+
+
+def detect_mss_bos(dataframe: pd.DataFrame, tf: str, minimum_breaks: int = 2) -> dict:
+    mss_result = detect_mss(dataframe, tf=tf)
+    bos_result = detect_bos(dataframe, tf=tf, minimum_breaks=minimum_breaks)
+    confirmed = mss_result["confirmed"] or bos_result["confirmed"]
+    signal = mss_result["signal"] or bos_result["signal"]
+    return {
+        "confirmed": confirmed,
+        "mss_confirmed": mss_result["confirmed"],
+        "bos_confirmed": bos_result["confirmed"],
+        "signal": signal,
+        "bos_count": bos_result["bos_count"],
+        "tf": tf,
+    }
+
+
+def calculate_htf_tp(high_tf_data: list[dict], bias: str, entry: float) -> tuple[float | None, str | None]:
+    """
+    Use the highest relevant HTF target for TP.
+
+    For buys, target the highest relevant swing/high above entry.
+    For sells, target the lowest relevant swing/low below entry.
+    """
+
+    for item in high_tf_data:
+        tf = item["tf"]
+        dataframe = item["dataframe"]
+        structure = detect_market_structure(dataframe)
+        if "bullish" in bias:
+            target = structure.get("last_HH") or float(dataframe["high"].tail(20).max())
+            if target and target > entry:
+                return round(float(target), 4), tf
+        else:
+            target = structure.get("last_LL") or float(dataframe["low"].tail(20).min())
+            if target and target < entry:
+                return round(float(target), 4), tf
+
+    return None, None
+
+
+def determine_alert_stage(result: dict) -> tuple[str | None, dict]:
+    """
+    Classify strict execution progress into staged alerts.
+
+    Stages:
+    - SETUP FORMING: HTF bias aligned and core structure/block context exists.
+    - ZONE WATCH: setup is forming and price is approaching the 50% entry.
+    - HIGH SETUP: full confluence plus entry touch.
+    """
+
+    details = result.get("details", {})
+    confluences = result.get("confluences", [])
+    entry = result.get("entry")
+    current_price = result.get("current_price") or _extract_current_price(result)
+    confidence = int(result.get("confidence") or 0)
+    distance_ratio = None
+    if entry is not None and current_price is not None:
+        distance_ratio = abs(current_price - entry) / max(entry, 1e-9)
+
+    has_structure = bool(details.get("mss", {}).get("confirmed") or details.get("bos", {}).get("confirmed"))
+    has_block = bool(details.get("order_block", {}).get("confirmed") or details.get("breaker_block", {}).get("confirmed"))
+    has_fvg = bool(details.get("fvg", {}).get("confirmed"))
+    has_liquidity = bool(details.get("liquidity", {}).get("confirmed"))
+    has_inducement = bool(details.get("inducement", {}).get("confirmed"))
+
+    missing_confluences = []
+    if not has_structure:
+        missing_confluences.append("MSS/BOS")
+    if not has_liquidity:
+        missing_confluences.append("Liquidity")
+    if not has_inducement:
+        missing_confluences.append("Inducement")
+    if not has_block:
+        missing_confluences.append("OB/BB")
+    if not has_fvg:
+        missing_confluences.append("FVG")
+
+    # Setup-forming should already look meaningful, not just loosely aligned.
+    setup_forming = has_structure and has_block and has_fvg and (has_liquidity or has_inducement) and confidence >= 55
+
+    # Zone watch should be nearly complete: every execution confluence is present,
+    # price is close to entry, and only the actual touch is missing.
+    fully_built = has_structure and has_block and has_fvg and has_liquidity and has_inducement
+    zone_watch = fully_built and entry is not None and distance_ratio is not None and distance_ratio <= 0.0015
+
+    if result.get("setup") == "HIGH_PROBABILITY":
+        return "HIGH_SETUP", {
+            "pair": result["pair"],
+            "bias": result["bias"],
+            "entry": result["entry"],
+            "stop_loss": result["sl"],
+            "take_profit": result["tp"],
+            "confluences": confluences,
+            "confidence": result["confidence"],
+            "timestamp": datetime.now(UTC).isoformat(),
+            "missing_confluences": [],
+        }
+
+    if zone_watch:
+        return "ZONE_WATCH", {
+            "pair": result["pair"],
+            "bias": result["bias"],
+            "entry": result["entry"],
+            "stop_loss": result["sl"],
+            "take_profit": result["tp"],
+            "confluences": confluences,
+            "confidence": result["confidence"],
+            "timestamp": datetime.now(UTC).isoformat(),
+            "missing_confluences": [],
+        }
+
+    if setup_forming:
+        return "SETUP_FORMING", {
+            "pair": result["pair"],
+            "bias": result["bias"],
+            "entry": result["entry"],
+            "stop_loss": result["sl"],
+            "take_profit": result["tp"],
+            "confluences": confluences,
+            "confidence": result["confidence"],
+            "timestamp": datetime.now(UTC).isoformat(),
+            "missing_confluences": missing_confluences,
+        }
+
+    return None, {}
+
+
 def _build_entry_model(
     bias: str,
     block_result: dict,
     fvg_result: dict,
-    daily_zones: list[dict],
+    high_tf_data: list[dict],
     execution_candles: pd.DataFrame,
     atr_period: int,
     tp_atr_multiplier: float,
 ) -> dict:
     zone = block_result.get("zone")
     if zone is None:
-        return {"confirmed": False, "entry": None, "sl": None, "tp": None}
+        return {"confirmed": False, "entry": None, "sl": None, "tp": None, "tp_timeframe": None}
 
     zone_low = min(zone["start_price"], zone["end_price"])
     zone_high = max(zone["start_price"], zone["end_price"])
@@ -438,7 +653,7 @@ def _build_entry_model(
     zone_size = max(zone_high - zone_low, entry * 0.001)
     atr = _calculate_atr(execution_candles, period=atr_period)
     atr_component = atr * tp_atr_multiplier
-    htf_target = _find_htf_target(bias=bias, daily_zones=daily_zones, entry=entry)
+    htf_target, tp_timeframe = calculate_htf_tp(high_tf_data=high_tf_data, bias=bias, entry=entry)
     if "bullish" in bias:
         sl = round(zone_low - (zone_size * 0.2), 4)
         projected_tp = entry + max((entry - sl) * 2.5, atr_component)
@@ -454,37 +669,41 @@ def _build_entry_model(
         "entry": entry,
         "sl": sl,
         "tp": tp,
+        "tp_timeframe": tp_timeframe,
     }
 
 
 def _build_confluences(
     bias: str,
     execution_timeframe: str,
-    mss_result: dict,
-    bos_result: dict,
+    structure_result: dict,
     liquidity_result: dict,
     inducement_result: dict,
     block_result: dict,
     fvg_result: dict,
     daily_zones: list[dict],
-) -> list[str]:
-    confluences = [f"HTF Bias {bias.upper()}", f"{execution_timeframe.upper()} bias aligned"]
+) -> list[dict]:
+    confluences = [
+        {"type": "HTF Bias", "tf": "Daily"},
+        {"type": "LTF Bias", "tf": execution_timeframe.upper()},
+    ]
     if daily_zones:
-        confluences.append("Daily key zone")
-    if mss_result["confirmed"]:
-        confluences.append("MSS")
-    if bos_result["confirmed"]:
-        confluences.append(f"Multiple BOS ({bos_result['bos_count']})")
+        confluences.append({"type": "Daily Zone", "tf": "Daily"})
+    if structure_result["mss_confirmed"]:
+        confluences.append({"type": "MSS", "tf": structure_result["tf"].upper()})
+    if structure_result["bos_confirmed"]:
+        confluences.append({"type": f"BOS x{structure_result['bos_count']}", "tf": structure_result["tf"].upper()})
     if liquidity_result["confirmed"]:
-        confluences.append("Liquidity sweep")
+        confluences.append({"type": "Liquidity Sweep", "tf": liquidity_result["tf"].upper()})
         if liquidity_result["equal_levels"]:
-            confluences.append("Equal highs/lows")
+            confluences.append({"type": "Equal Highs/Lows", "tf": liquidity_result["tf"].upper()})
     if inducement_result["confirmed"]:
-        confluences.append("Inducement")
+        confluences.append({"type": "Inducement", "tf": inducement_result["tf"].upper()})
     if block_result["confirmed"] and fvg_result["confirmed"]:
-        confluences.append(f"{block_result['block_type']} + FVG")
+        confluences.append({"type": block_result["block_type"], "tf": block_result["tf"].upper()})
+        confluences.append({"type": "FVG", "tf": fvg_result["tf"].upper()})
     elif block_result["confirmed"]:
-        confluences.append(block_result["block_type"])
+        confluences.append({"type": block_result["block_type"], "tf": block_result["tf"].upper()})
     return confluences
 
 
@@ -533,6 +752,17 @@ def _price_reached_entry(current_price: float, candle: pd.Series, entry: float |
     return candle_low <= entry <= candle_high or abs(current_price - entry) / max(entry, 1e-9) <= 0.0005
 
 
+def _extract_current_price(result: dict) -> float | None:
+    details = result.get("details", {})
+    active_block = details.get("active_block", {})
+    zone = active_block.get("zone")
+    entry = result.get("entry")
+    if zone and entry is not None:
+        zone_mid = _zone_midpoint(zone)
+        return zone_mid if zone_mid else entry
+    return entry
+
+
 def _zone_midpoint(zone: dict) -> float:
     return (min(zone["start_price"], zone["end_price"]) + max(zone["start_price"], zone["end_price"])) / 2
 
@@ -578,7 +808,7 @@ def _build_no_setup_payload(
     entry: float | None = None,
     sl: float | None = None,
     tp: float | None = None,
-    confluences: list[str] | None = None,
+    confluences: list[object] | None = None,
     confidence: int = 0,
     extra_details: dict | None = None,
 ) -> dict:

@@ -27,8 +27,8 @@ def build_performance_snapshot() -> dict:
     for entry in journal:
         strategy_groups[entry.get("strategy", "Unknown")].append(entry)
         for concept in entry.get("confluences", []):
-            concept_counter[concept] += 1
-        combo = " + ".join(sorted(entry.get("confluences", [])))
+            concept_counter[_normalize_confluence_name(concept)] += 1
+        combo = " + ".join(sorted(_normalize_confluence_name(item) for item in entry.get("confluences", [])))
         if combo:
             confluence_combo_counter[combo] += 1
 
@@ -63,3 +63,11 @@ def build_performance_snapshot() -> dict:
         "strategy_breakdown": strategy_breakdown,
         "best_strategies": best_research_strategies,
     }
+
+
+def _normalize_confluence_name(value) -> str:
+    if isinstance(value, dict):
+        confluence_type = value.get("type", "Unknown")
+        confluence_tf = value.get("tf")
+        return f"{confluence_type} ({confluence_tf})" if confluence_tf else confluence_type
+    return str(value)

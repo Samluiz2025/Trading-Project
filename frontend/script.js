@@ -144,6 +144,20 @@ function formatNumber(value, digits = 4) {
     return typeof value === "number" ? value.toFixed(digits) : "-";
 }
 
+function formatConfluence(item) {
+    if (typeof item === "string") {
+        return item;
+    }
+    if (item && typeof item === "object") {
+        return item.tf ? `${item.type} (${item.tf})` : String(item.type || "Confluence");
+    }
+    return String(item);
+}
+
+function formatTf(value) {
+    return value ? String(value).toUpperCase() : "-";
+}
+
 function createCard(title, lines, tagClass = "info", tagLabel = "INFO") {
     return `
         <article class="card">
@@ -193,25 +207,25 @@ function renderSetup(payload) {
             contextLines.push(`Execution timeframe: ${analysisContext.execution_timeframe.toUpperCase()}`);
         }
         if (analysisContext.order_block?.confirmed) {
-            contextLines.push(`Order Block: ${analysisContext.order_block.block_type}`);
+            contextLines.push(`Order Block: ${analysisContext.order_block.block_type} (${formatTf(analysisContext.order_block.tf)})`);
         }
         if (analysisContext.breaker_block?.confirmed) {
-            contextLines.push("Breaker Block confirmed");
+            contextLines.push(`Breaker Block confirmed (${formatTf(analysisContext.breaker_block.tf)})`);
         }
         if (analysisContext.fvg?.confirmed) {
-            contextLines.push("FVG is present near active block");
+            contextLines.push(`FVG is present near active block (${formatTf(analysisContext.fvg.tf)})`);
         }
         if (analysisContext.liquidity?.confirmed) {
-            contextLines.push("Liquidity sweep detected");
+            contextLines.push(`Liquidity sweep detected (${formatTf(analysisContext.liquidity.tf)})`);
         }
         if (analysisContext.inducement?.confirmed) {
-            contextLines.push("Inducement detected");
+            contextLines.push(`Inducement detected (${formatTf(analysisContext.inducement.tf)})`);
         }
         if (analysisContext.mss?.confirmed) {
-            contextLines.push(`MSS: ${analysisContext.mss.signal || "-"}`);
+            contextLines.push(`MSS: ${analysisContext.mss.signal || "-"} (${formatTf(analysisContext.mss.tf)})`);
         }
         if (analysisContext.bos?.confirmed) {
-            contextLines.push(`BOS count: ${analysisContext.bos.bos_count || 0}`);
+            contextLines.push(`BOS count: ${analysisContext.bos.bos_count || 0} (${formatTf(analysisContext.bos.tf)})`);
         }
 
         container.innerHTML = createCard(
@@ -230,9 +244,10 @@ function renderSetup(payload) {
             `Entry: ${formatNumber(payload.entry)}`,
             `SL: ${formatNumber(payload.sl)}`,
             `TP: ${formatNumber(payload.tp)}`,
+            `HTF TP TF: ${formatTf(analysisContext.tp_timeframe)}`,
             `Ranking score: ${formatNumber(payload.ranking_score, 2)}`,
             `Historical win rate: ${formatNumber(payload.historical_win_rate, 2)}%`,
-            `Confluences: ${(payload.confluences || []).join(", ") || "None"}`,
+            `Confluences: ${(payload.confluences || []).map(formatConfluence).join(", ") || "None"}`,
         ],
         biasClass(payload.final_bias),
         payload.final_bias || "neutral",
@@ -251,6 +266,7 @@ function renderSetupMap(payload, hasSetup) {
                 `Active ${analysisContext.active_block.block_type || "Block"}`,
                 [
                     `Type: ${zone.type}`,
+                    `Timeframe: ${formatTf(analysisContext.active_block.tf)}`,
                     `Zone: ${formatNumber(zone.start_price)} -> ${formatNumber(zone.end_price)}`,
                     `Quality: ${analysisContext.active_block.quality_score || 0}`,
                 ],
@@ -262,6 +278,7 @@ function renderSetupMap(payload, hasSetup) {
             contextCards.push(createCard(
                 "Nearest FVG",
                 [
+                    `Timeframe: ${formatTf(analysisContext.fvg.tf)}`,
                     `Entry: ${formatNumber(analysisContext.fvg.gap.entry)}`,
                     `SL: ${formatNumber(analysisContext.fvg.gap.stop_loss)}`,
                     `TP: ${formatNumber(analysisContext.fvg.gap.take_profit)}`,
@@ -273,9 +290,24 @@ function renderSetupMap(payload, hasSetup) {
         if (analysisContext.liquidity?.equal_levels?.length) {
             contextCards.push(createCard(
                 "Liquidity Levels",
-                analysisContext.liquidity.equal_levels.map((level) => `${level.type}: ${formatNumber(level.first)} / ${formatNumber(level.second)}`),
+                [
+                    `Timeframe: ${formatTf(analysisContext.liquidity.tf)}`,
+                    ...analysisContext.liquidity.equal_levels.map((level) => `${level.type}: ${formatNumber(level.first)} / ${formatNumber(level.second)}`),
+                ],
                 "info",
                 "liq",
+            ));
+        }
+        if (analysisContext.inducement?.confirmed) {
+            contextCards.push(createCard(
+                "Inducement",
+                [
+                    `Timeframe: ${formatTf(analysisContext.inducement.tf)}`,
+                    `Trap side: ${analysisContext.inducement.trap_side || "-"}`,
+                    `Levels: ${(analysisContext.inducement.levels || []).map((level) => formatNumber(level)).join(" / ") || "-"}`,
+                ],
+                "info",
+                "induce",
             ));
         }
 
@@ -295,7 +327,7 @@ function renderSetupMap(payload, hasSetup) {
             <div class="price-ladder">
                 <div class="price-row tp">
                     <span class="price-label">Take Profit</span>
-                    <span class="price-value">${formatNumber(payload.tp)}</span>
+                    <span class="price-value">${formatNumber(payload.tp)} <small>(${formatTf(analysisContext.tp_timeframe)})</small></span>
                 </div>
                 <div class="price-row entry">
                     <span class="price-label">Entry</span>
@@ -329,7 +361,7 @@ function renderSetupMap(payload, hasSetup) {
                 <strong>${distanceToEntry != null ? formatNumber(distanceToEntry) : "-"}</strong>
             </div>
             <div class="confluence-grid">
-                ${(payload.confluences || []).map((item) => `<span class="overlay-chip">${item}</span>`).join("") || '<span class="overlay-chip">No confluences</span>'}
+                ${(payload.confluences || []).map((item) => `<span class="overlay-chip">${formatConfluence(item)}</span>`).join("") || '<span class="overlay-chip">No confluences</span>'}
             </div>
         </div>
     `;
@@ -379,10 +411,11 @@ function renderHtfAndOverlays(payload) {
             createCard(
                 "Latest FVG",
                 [
+                    overlays.latest_fvg.timeframe ? `TF: ${formatTf(overlays.latest_fvg.timeframe)}` : null,
                     `${overlays.latest_fvg.signal} at ${formatNumber(overlays.latest_fvg.entry)}`,
                     `SL: ${formatNumber(overlays.latest_fvg.stop_loss)}`,
                     `TP: ${formatNumber(overlays.latest_fvg.take_profit)}`,
-                ],
+                ].filter(Boolean),
                 "info",
                 "FVG",
             )
@@ -394,10 +427,11 @@ function renderHtfAndOverlays(payload) {
             createCard(
                 "Order Block",
                 [
+                    overlays.order_block.timeframe ? `TF: ${formatTf(overlays.order_block.timeframe)}` : null,
                     `${overlays.order_block.signal} at ${formatNumber(overlays.order_block.entry)}`,
                     `SL: ${formatNumber(overlays.order_block.stop_loss)}`,
                     `TP: ${formatNumber(overlays.order_block.take_profit)}`,
-                ],
+                ].filter(Boolean),
                 "info",
                 "OB",
             )
@@ -437,7 +471,7 @@ function renderHtfAndOverlays(payload) {
         chips.push(`<span class="overlay-chip">HTF ${String(payload.htf.bias).toUpperCase()}</span>`);
     }
     (payload.confluences || []).slice(0, 6).forEach((item) => {
-        chips.push(`<span class="overlay-chip">${item}</span>`);
+        chips.push(`<span class="overlay-chip">${formatConfluence(item)}</span>`);
     });
     strip.innerHTML = chips.join("") || '<span class="overlay-chip">No active confluence tags</span>';
 }

@@ -367,13 +367,13 @@ def _build_concept_overlays(symbol: str, source: SupportedSource, timeframe: str
     liquidity_signals = detect_liquidity_sweep_signals(candles)
     order_block_signals = detect_order_block_signals(candles, symbol=symbol, timeframe=timeframe)
     return {
-        "latest_fvg": _signal_to_overlay(fvg_signals[-1]) if fvg_signals else None,
-        "liquidity": [_signal_to_overlay(signal) for signal in liquidity_signals[-2:]],
-        "order_block": _signal_to_overlay(order_block_signals[-1]) if order_block_signals else None,
+        "latest_fvg": _signal_to_overlay(fvg_signals[-1], timeframe=timeframe) if fvg_signals else None,
+        "liquidity": [_signal_to_overlay(signal, timeframe=timeframe) for signal in liquidity_signals[-2:]],
+        "order_block": _signal_to_overlay(order_block_signals[-1], timeframe=timeframe) if order_block_signals else None,
     }
 
 
-def _signal_to_overlay(signal) -> dict:
+def _signal_to_overlay(signal, timeframe: str | None = None) -> dict:
     return {
         "name": signal.concept,
         "signal": signal.signal,
@@ -381,6 +381,7 @@ def _signal_to_overlay(signal) -> dict:
         "stop_loss": round(signal.stop_loss, 4),
         "take_profit": round(signal.take_profit, 4),
         "time": signal.time,
+        "timeframe": timeframe,
     }
 
 

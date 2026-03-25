@@ -1,0 +1,212 @@
+[
+  {
+    "type": "zone_watch",
+    "signature": "ZONE_WATCH|USDJPY|BULLISH|158.5205|158.2874|159.1033",
+    "pair": "USDJPY",
+    "bias": "BULLISH",
+    "entry": 158.5205,
+    "stop_loss": 158.2874,
+    "take_profit": 159.1033,
+    "confluences": [
+      "HTF Bias BULLISH",
+      "1H bias aligned",
+      "Daily key zone",
+      "Multiple BOS (10)",
+      "Liquidity sweep",
+      "Equal highs/lows",
+      "OB + FVG"
+    ],
+    "confidence": 94,
+    "timestamp": "2026-03-25T16:25:53.374456+00:00",
+    "message": "[ZONE WATCH]\nPair: USDJPY\nBias: BULLISH\nEntry: 158.5205\nSL: 158.2874\nTP: 159.1033\nConfluences:\n- HTF Bias BULLISH\n- 1H bias aligned\n- Daily key zone\n- Multiple BOS (10)\n- Liquidity sweep\n- Equal highs/lows\n- OB + FVG"
+  },
+  {
+    "type": "zone_watch",
+    "signature": "ZONE_WATCH|USDJPY|BULLISH|159.1655|159.0982|159.8160",
+    "pair": "USDJPY",
+    "bias": "BULLISH",
+    "entry": 159.1655,
+    "stop_loss": 159.0982,
+    "take_profit": 159.816,
+    "confluences": [
+      {
+        "type": "HTF Bias",
+        "tf": "Daily"
+      },
+      {
+        "type": "LTF Bias",
+        "tf": "1H"
+      },
+      {
+        "type": "Daily Zone",
+        "tf": "Daily"
+      },
+      {
+        "type": "BOS x6",
+        "tf": "15M"
+      },
+      {
+        "type": "Liquidity Sweep",
+        "tf": "15M"
+      },
+      {
+        "type": "Equal Highs/Lows",
+        "tf": "15M"
+      },
+      {
+        "type": "OB",
+        "tf": "15M"
+      },
+      {
+        "type": "FVG",
+        "tf": "15M"
+      }
+    ],
+    "confidence": 100,
+    "timestamp": "2026-03-25T16:49:12.791611+00:00",
+    "message": "[ZONE WATCH]\nPair: USDJPY\nBias: BULLISH\nEntry: 159.1655\nSL: 159.0982\nTP: 159.8160\nConfluences:\n- HTF Bias (Daily)\n- LTF Bias (1H)\n- Daily Zone (Daily)\n- BOS x6 (15M)\n- Liquidity Sweep (15M)\n- Equal Highs/Lows (15M)\n- OB (15M)\n- FVG (15M)"
+  },
+  {
+    "type": "zone_watch",
+    "signature": "ZONE_WATCH|AUDUSD|BEARISH|0.6961|0.6963|0.6911",
+    "pair": "AUDUSD",
+    "bias": "BEARISH",
+    "entry": 0.6961,
+    "stop_loss": 0.6963,
+    "take_profit": 0.6911,
+    "confluences": [
+      {
+        "type": "HTF Bias",
+        "tf": "Daily"
+      },
+      {
+        "type": "LTF Bias",
+        "tf": "1H"
+      },
+      {
+        "type": "Daily Zone",
+        "tf": "Daily"
+      },
+      {
+        "type": "BOS x2",
+        "tf": "15M"
+      },
+      {
+        "type": "Liquidity Sweep",
+        "tf": "15M"
+      },
+      {
+        "type": "Equal Highs/Lows",
+        "tf": "15M"
+      },
+      {
+        "type": "OB",
+        "tf": "15M"
+      },
+      {
+        "type": "FVG",
+        "tf": "15M"
+      }
+    ],
+    "confidence": 100,
+    "timestamp": "2026-03-25T16:50:22.939404+00:00",
+    "message": "[ZONE WATCH]\nPair: AUDUSD\nBias: BEARISH\nEntry: 0.6961\nSL: 0.6963\nTP: 0.6911\nConfluences:\n- HTF Bias (Daily)\n- LTF Bias (1H)\n- Daily Zone (Daily)\n- BOS x2 (15M)\n- Liquidity Sweep (15M)\n- Equal Highs/Lows (15M)\n- OB (15M)\n- FVG (15M)"
+  },
+  {
+    "type": "zone_watch",
+    "signature": "ZONE_WATCH|GBPJPY|BULLISH|212.6360|212.5815|213.2910",
+    "pair": "GBPJPY",
+    "bias": "BULLISH",
+    "entry": 212.636,
+    "stop_loss": 212.5815,
+    "take_profit": 213.291,
+    "confluences": [
+      {
+        "type": "HTF Bias",
+        "tf": "Daily"
+      },
+      {
+        "type": "LTF Bias",
+        "tf": "4H"
+      },
+      {
+        "type": "Daily Zone",
+        "tf": "Daily"
+      },
+      {
+        "type": "MSS",
+        "tf": "15M"
+      },
+      {
+        "type": "Liquidity Sweep",
+        "tf": "15M"
+      },
+      {
+        "type": "Equal Highs/Lows",
+        "tf": "15M"
+      },
+      {
+        "type": "OB",
+        "tf": "15M"
+      },
+      {
+        "type": "FVG",
+        "tf": "15M"
+      }
+    ],
+    "confidence": 90,
+    "timestamp": "2026-03-25T16:55:29.669080+00:00",
+    "message": "[ZONE WATCH]\nPair: GBPJPY\nBias: BULLISH\nEntry: 212.6360\nSL: 212.5815\nTP: 213.2910\nConfluences:\n- HTF Bias (Daily)\n- LTF Bias (4H)\n- Daily Zone (Daily)\n- MSS (15M)\n- Liquidity Sweep (15M)\n- Equal Highs/Lows (15M)\n- OB (15M)\n- FVG (15M)"
+  },
+  {
+    "type": "high_setup",
+    "signature": "HIGH_SETUP|AUDUSD|BEARISH|0.6961|0.6963|0.6911",
+    "pair": "AUDUSD",
+    "bias": "BEARISH",
+    "entry": 0.6961,
+    "stop_loss": 0.6963,
+    "take_profit": 0.6911,
+    "tp_timeframe": "Daily",
+    "confluences": [
+      {
+        "type": "HTF Bias",
+        "tf": "Daily"
+      },
+      {
+        "type": "LTF Bias",
+        "tf": "1H"
+      },
+      {
+        "type": "Daily Zone",
+        "tf": "Daily"
+      },
+      {
+        "type": "BOS x2",
+        "tf": "15M"
+      },
+      {
+        "type": "Liquidity Sweep",
+        "tf": "15M"
+      },
+      {
+        "type": "Equal Highs/Lows",
+        "tf": "15M"
+      },
+      {
+        "type": "Inducement",
+        "tf": "1H"
+      },
+      {
+        "type": "BB",
+        "tf": "15M"
+      },
+      {
+        "type": "FVG",
+        "tf": "15M"
+      }
+    ],
+    "confidence": 100,
+    "timestamp": "2026-03-25T17:09:22.033919+00:00",
+    "message": "[HIGH SETUP]\nPair: AUDUSD\nBias: BEARISH\nEntry: 0.6961\nSL: 0.6963\nTP: 0.6911\nConfluences:\n- HTF Bias (Daily)\n- LTF Bias (1H)\n- Daily Zone (Daily)\n- BOS x2 (15M)\n- Liquidity Sweep (15M)\n- Equal Highs/Lows (15M)\n- Inducement (1H)\n- BB (15M)\n- FVG (15M)"
+  }
+]

@@ -4,6 +4,7 @@ import json
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
+import time
 from typing import Literal
 
 import pandas as pd
@@ -33,6 +34,10 @@ DataSource = Literal["auto", "binance", "mock", "yfinance", "oanda", "alphavanta
 BASE_DIR = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = BASE_DIR / "frontend"
 DEFAULT_NEWS_CALENDAR_PATH = BASE_DIR / "trading_bot" / "data" / "economic_calendar.json"
+DATA_CACHE_TTL_SECONDS = 2.0
+JOURNAL_CACHE_TTL_SECONDS = 3.0
+PERFORMANCE_CACHE_TTL_SECONDS = 3.0
+_RESPONSE_CACHE: dict[str, tuple[float, object]] = {}
 
 
 app = FastAPI(
@@ -58,6 +63,11 @@ def get_frontend_data(
     source: DataSource = Query(default="auto", description="OHLC data source."),
 ) -> dict:
     """Return the complete platform state for the dashboard."""
+
+    cache_key = f"data|{symbol.upper()}|{interval}|{limit}|{source}"
+    cached_payload = _cache_get(cache_key, ttl_seconds=DATA_CACHE_TTL_SECONDS)
+    if cached_payload is not None:
+        return cached_payload
 
     try:
         news_provider = _load_default_news_provider()
@@ -109,6 +119,12 @@ def get_frontend_data(
                 "stop_loss": strict_result["sl"],
                 "take_profit": strict_result["tp"],
                 "zone_type": strict_result["details"]["active_block"]["block_type"],
+                "risk_reward_ratio": _calculate_risk_reward_ratio(
+                    strict_result["entry"],
+                    strict_result["sl"],
+                    strict_result["tp"],
+                ),
+                "tp_timeframe": strict_result.get("details", {}).get("tp_timeframe"),
             }
         ]
 
@@ -123,15 +139,23 @@ def get_frontend_data(
             confluences=active_confluences,
             confidence=active_confidence,
             timeframe=interval,
+            source=source,
             timeframes_used=[
-                "1d",
-                strict_result.get("execution_timeframe", interval) if strict_result else interval,
+                timeframe
+                for timeframe in dict.fromkeys(
+                    [
+                        "1d",
+                        strict_result.get("execution_timeframe", interval) if strict_result else interval,
+                        strict_result.get("details", {}).get("tp_timeframe"),
+                    ]
+                )
+                if timeframe
             ],
             profit_factor=performance.get("profit_factor"),
         )
 
     journal_entries = get_recent_journal(limit=12)
-    return {
+    payload = {
         "symbol": symbol.upper(),
         "interval": interval,
         "source": source,
@@ -162,6 +186,7 @@ def get_frontend_data(
             "bos": strict_result.get("details", {}).get("bos"),
             "inducement": strict_result.get("details", {}).get("inducement"),
             "execution_timeframe": strict_result.get("execution_timeframe"),
+            "tp_timeframe": strict_result.get("details", {}).get("tp_timeframe"),
         },
         "setups": setup_list,
         "zones": state["htf"]["zones"],
@@ -169,6 +194,8 @@ def get_frontend_data(
         "journal": journal_entries,
         "performance": performance,
     }
+    _cache_set(cache_key, payload)
+    return payload
 
 
 @app.get("/alerts")
@@ -183,7 +210,13 @@ def get_journal(limit: int = Query(default=25, ge=1, le=200)) -> dict:
     """Return recent journal entries for the dashboard and later analytics."""
 
     try:
-        return {"entries": get_recent_journal(limit=limit)}
+        cache_key = f"journal|{limit}"
+        cached_payload = _cache_get(cache_key, ttl_seconds=JOURNAL_CACHE_TTL_SECONDS)
+        if cached_payload is not None:
+            return cached_payload
+        payload = {"entries": get_recent_journal(limit=limit)}
+        _cache_set(cache_key, payload)
+        return payload
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to load journal: {exc}") from exc
 
@@ -193,7 +226,13 @@ def get_performance() -> dict:
     """Return live performance statistics from journal and research history."""
 
     try:
-        return build_performance_snapshot()
+        cache_key = "performance"
+        cached_payload = _cache_get(cache_key, ttl_seconds=PERFORMANCE_CACHE_TTL_SECONDS)
+        if cached_payload is not None:
+            return cached_payload
+        payload = build_performance_snapshot()
+        _cache_set(cache_key, payload)
+        return payload
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Failed to build performance snapshot: {exc}") from exc
 
@@ -1701,6 +1740,31 @@ def _serialize_swing_for_chart(swing: dict) -> dict:
         **swing,
         "time": int(pd.Timestamp(swing["time"]).timestamp()),
     }
+
+
+def _cache_get(key: str, ttl_seconds: float):
+    cached = _RESPONSE_CACHE.get(key)
+    if cached is None:
+        return None
+    cached_at, value = cached
+    if (time.monotonic() - cached_at) > ttl_seconds:
+        _RESPONSE_CACHE.pop(key, None)
+        return None
+    return value
+
+
+def _cache_set(key: str, value: object) -> None:
+    _RESPONSE_CACHE[key] = (time.monotonic(), value)
+
+
+def _calculate_risk_reward_ratio(entry: float | None, stop_loss: float | None, take_profit: float | None) -> float | None:
+    if entry is None or stop_loss is None or take_profit is None:
+        return None
+    risk = abs(float(entry) - float(stop_loss))
+    if risk <= 0:
+        return None
+    reward = abs(float(take_profit) - float(entry))
+    return round(reward / risk, 2)
 
 
 def _load_default_news_provider() -> JsonEconomicCalendarProvider | None:

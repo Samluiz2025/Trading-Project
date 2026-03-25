@@ -10,13 +10,20 @@ import requests
 from trading_bot.core.alerts_store import append_alert, load_alerts
 from trading_bot.core.data_fetcher import FetchConfig, fetch_ohlc
 from trading_bot.core.instrument_universe import get_instrument_universe
+from trading_bot.core.journal import update_open_trade_outcomes
 from trading_bot.core.market_structure import detect_market_structure
 from trading_bot.core.news_engine import (
     EconomicCalendarProvider,
     build_news_alerts,
     fetch_market_moving_events,
 )
-from trading_bot.core.strategy_execution_engine import ExecutionConfig, evaluate_strict_execution_setup, format_high_setup_alert
+from trading_bot.core.strategy_execution_engine import (
+    ExecutionConfig,
+    determine_alert_stage,
+    evaluate_strict_execution_setup,
+    format_high_setup_alert,
+    generate_alert_with_tf_info,
+)
 from trading_bot.core.strategy_engine import generate_trade_setup
 from trading_bot.core.supply_demand import detect_supply_demand_zones
 
@@ -43,6 +50,7 @@ class AlertState:
     alerted_released_news_keys: set[str] = field(default_factory=set)
     alerted_sudden_news_keys: set[str] = field(default_factory=set)
     alerted_strict_setup_keys: set[str] = field(default_factory=set)
+    alerted_strict_stage_keys: set[str] = field(default_factory=set)
 
 
 @dataclass(frozen=True)
@@ -191,28 +199,81 @@ def monitor_strict_symbol(
             source=source,
         )
     )
-    if result.get("setup") != "HIGH_PROBABILITY":
+    stage, stage_payload = determine_alert_stage(result)
+    if stage is None:
         return [], active_state
 
-    signature = _build_strict_setup_signature(result)
-    if signature in active_state.alerted_strict_setup_keys:
+    signature = _build_strict_setup_signature(result, stage=stage)
+    if signature in active_state.alerted_strict_stage_keys:
         return [], active_state
 
-    message = format_high_setup_alert(result)
-    alert_payload = {
-        "type": "high_setup",
-        "signature": signature,
-        "pair": result["pair"],
-        "bias": result["bias"],
-        "entry": result["entry"],
-        "stop_loss": result["sl"],
-        "take_profit": result["tp"],
-        "confluences": result["confluences"],
-        "confidence": result["confidence"],
-        "message": message,
-    }
+    if stage == "HIGH_SETUP":
+        message = format_high_setup_alert(result)
+        alert_payload = {
+            "type": stage.lower(),
+            "signature": signature,
+            **generate_alert_with_tf_info(result),
+            "message": message,
+        }
+    elif stage == "ZONE_WATCH":
+        message = (
+            "[ZONE WATCH]\n"
+            f"Pair: {stage_payload['pair']}\n"
+            f"Bias: {stage_payload['bias']}\n"
+            f"Entry: {stage_payload['entry']:.4f}\n"
+            f"SL: {stage_payload['stop_loss']:.4f}\n"
+            f"TP: {stage_payload['take_profit']:.4f}\n"
+            f"Confidence: {stage_payload['confidence']}%\n"
+            "Confluences:\n"
+            + "\n".join(f"- {_format_confluence_for_alert(item)}" for item in stage_payload["confluences"])
+        )
+        alert_payload = {
+            "type": stage.lower(),
+            "signature": signature,
+            "pair": stage_payload["pair"],
+            "bias": stage_payload["bias"],
+            "entry": stage_payload["entry"],
+            "stop_loss": stage_payload["stop_loss"],
+            "take_profit": stage_payload["take_profit"],
+            "confluences": stage_payload["confluences"],
+            "confidence": stage_payload["confidence"],
+            "timestamp": stage_payload["timestamp"],
+            "message": message,
+        }
+    else:
+        missing_lines = ""
+        if stage_payload.get("missing_confluences"):
+            missing_lines = "\nMissing:\n" + "\n".join(
+                f"- {item}" for item in stage_payload["missing_confluences"]
+            )
+        message = (
+            "[SETUP FORMING]\n"
+            f"Pair: {stage_payload['pair']}\n"
+            f"Bias: {stage_payload['bias']}\n"
+            f"Potential Entry: {stage_payload['entry']:.4f}\n"
+            f"Confidence: {stage_payload['confidence']}%\n"
+            "Confluences:\n"
+            + "\n".join(f"- {_format_confluence_for_alert(item)}" for item in stage_payload["confluences"])
+            + missing_lines
+        )
+        alert_payload = {
+            "type": stage.lower(),
+            "signature": signature,
+            "pair": stage_payload["pair"],
+            "bias": stage_payload["bias"],
+            "entry": stage_payload["entry"],
+            "stop_loss": stage_payload["stop_loss"],
+            "take_profit": stage_payload["take_profit"],
+            "confluences": stage_payload["confluences"],
+            "missing_confluences": stage_payload.get("missing_confluences", []),
+            "confidence": stage_payload["confidence"],
+            "timestamp": stage_payload["timestamp"],
+            "message": message,
+        }
     append_alert(alert_payload)
-    active_state.alerted_strict_setup_keys.add(signature)
+    active_state.alerted_strict_stage_keys.add(signature)
+    if stage == "HIGH_SETUP":
+        active_state.alerted_strict_setup_keys.add(signature)
     return [alert_payload], active_state
 
 
@@ -229,6 +290,11 @@ def run_strict_market_scanner(
 
     print(f"[INFO] Strict market scanner started for {group} universe.")
     print(f"[INFO] Scanning {len(symbols)} symbols every {poll_interval_seconds} seconds.")
+    if telegram_config is not None:
+        send_telegram_alert(
+            f"[INFO] Strict scanner is online. Universe={group.upper()} Symbols={len(symbols)} Poll={poll_interval_seconds}s",
+            telegram_config,
+        )
 
     while True:
         for symbol in symbols:
@@ -245,6 +311,28 @@ def run_strict_market_scanner(
                         send_telegram_alert(alert["message"], telegram_config)
             except Exception as exc:
                 print(f"[ERROR] Strict scanner failed for {symbol.upper()}: {exc}")
+
+        try:
+            closed_trades = update_open_trade_outcomes(default_source=source)
+            for trade in closed_trades:
+                outcome_message = _format_trade_outcome_alert(trade)
+                outcome_alert = {
+                    "type": "trade_closed",
+                    "signature": f"trade_closed|{trade.get('signature')}|{trade.get('status')}",
+                    "pair": trade.get("symbol"),
+                    "bias": _infer_trade_bias_from_entry(trade),
+                    "entry": trade.get("entry"),
+                    "stop_loss": trade.get("stop_loss"),
+                    "take_profit": trade.get("take_profit"),
+                    "confidence": trade.get("confidence"),
+                    "timestamp": trade.get("closed_at"),
+                    "message": outcome_message,
+                }
+                append_alert(outcome_alert)
+                print(outcome_message)
+                send_telegram_alert(outcome_message, telegram_config)
+        except Exception as exc:
+            print(f"[ERROR] Open trade outcome monitor failed: {exc}")
         time.sleep(poll_interval_seconds)
 
 
@@ -453,13 +541,47 @@ def _get_symbol_currencies(symbol: str) -> tuple[str, str]:
     return cleaned, "USD"
 
 
-def _build_strict_setup_signature(result: dict) -> str:
+def _build_strict_setup_signature(result: dict, stage: str = "HIGH_SETUP") -> str:
     return "|".join(
         [
+            stage,
             result["pair"],
             result["bias"],
-            f"{result['entry']:.4f}",
-            f"{result['sl']:.4f}",
-            f"{result['tp']:.4f}",
+            _format_signature_number(result.get("entry")),
+            _format_signature_number(result.get("sl")),
+            _format_signature_number(result.get("tp")),
         ]
     )
+
+
+def _format_signature_number(value: float | None) -> str:
+    if value is None:
+        return "none"
+    return f"{value:.4f}"
+
+
+def _format_confluence_for_alert(item) -> str:
+    if isinstance(item, dict):
+        confluence_type = item.get("type", "Confluence")
+        confluence_tf = item.get("tf")
+        return f"{confluence_type} ({confluence_tf})" if confluence_tf else str(confluence_type)
+    return str(item)
+
+
+def _format_trade_outcome_alert(trade: dict) -> str:
+    return (
+        f"[TRADE {trade.get('status', 'CLOSED')}]\n"
+        f"Pair: {trade.get('symbol')}\n"
+        f"Strategy: {trade.get('strategy')}\n"
+        f"Entry: {float(trade.get('entry') or 0):.4f}\n"
+        f"SL: {float(trade.get('stop_loss') or 0):.4f}\n"
+        f"TP: {float(trade.get('take_profit') or 0):.4f}\n"
+        f"Outcome: {trade.get('status')}\n"
+        f"RR: {trade.get('rr_achieved')}"
+    )
+
+
+def _infer_trade_bias_from_entry(trade: dict) -> str:
+    entry = float(trade.get("entry") or 0)
+    target = float(trade.get("take_profit") or 0)
+    return "BUY" if target >= entry else "SELL"
