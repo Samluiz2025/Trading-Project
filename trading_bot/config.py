@@ -1,0 +1,4 @@
+APP_NAME = "Trading Intelligence System"
+DEFAULT_SYMBOL = "BTCUSDT"
+DEFAULT_INTERVAL = "1h"
+DEFAULT_LIMIT = 200
