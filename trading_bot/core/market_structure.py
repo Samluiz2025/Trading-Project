@@ -35,6 +35,19 @@ def detect_market_structure(dataframe: pd.DataFrame, swing_window: int = 2) -> d
     }
 
 
+def detect_swings(dataframe: pd.DataFrame, swing_window: int = 2) -> list[dict]:
+    """Public helper for retrieving raw swing highs and lows."""
+
+    validate_ohlc_dataframe(dataframe)
+    return _detect_swings(dataframe, swing_window=swing_window)
+
+
+def validate_ohlc_dataframe(dataframe: pd.DataFrame) -> None:
+    """Public validation helper shared by later analysis modules."""
+
+    _validate_ohlc_dataframe(dataframe)
+
+
 def _validate_ohlc_dataframe(dataframe: pd.DataFrame) -> None:
     required_columns = {"time", "open", "high", "low", "close"}
     missing_columns = required_columns.difference(dataframe.columns)
