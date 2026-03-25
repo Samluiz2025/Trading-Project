@@ -13,7 +13,7 @@ from trading_bot.core.strategy_engine import generate_trade_setup
 from trading_bot.core.supply_demand import detect_supply_demand_zones
 
 
-DataSource = Literal["auto", "binance", "mock", "yfinance", "oanda"]
+DataSource = Literal["auto", "binance", "mock", "yfinance", "oanda", "alphavantage", "twelvedata", "stooq"]
 
 
 app = FastAPI(
@@ -409,7 +409,7 @@ def get_chart(
                 </p>
             </div>
             <div class="chips">
-                <div class="chip">Supported sources: auto, binance, yfinance, oanda, mock</div>
+                <div class="chip">Supported sources: auto, binance, yfinance, stooq, oanda, alphavantage, twelvedata, mock</div>
                 <div class="chip">Run command: python -m uvicorn trading_bot.api.main:app --reload</div>
             </div>
         </section>
@@ -433,8 +433,15 @@ def get_chart(
                     <option value="AUDUSD"></option>
                     <option value="USDCAD"></option>
                     <option value="XAUUSD"></option>
+                    <option value="USOIL"></option>
+                    <option value="SPX"></option>
+                    <option value="NAS100"></option>
+                    <option value="DJI"></option>
+                    <option value="GER40"></option>
+                    <option value="UK100"></option>
+                    <option value="JP225"></option>
                 </datalist>
-                <div class="hint">Examples: BTCUSDT, ETHUSDT, EURUSD, GBPUSD, XAUUSD</div>
+                <div class="hint">Examples: BTCUSDT, EURUSD, XAUUSD, USOIL, SPX, NAS100, GER40</div>
             </div>
             <div class="control">
                 <label for="interval-select">Interval</label>
@@ -452,6 +459,9 @@ def get_chart(
                     <option value="binance">binance</option>
                     <option value="yfinance">yfinance</option>
                     <option value="oanda">oanda</option>
+                    <option value="alphavantage">alphavantage</option>
+                    <option value="twelvedata">twelvedata</option>
+                    <option value="stooq">stooq</option>
                     <option value="mock">mock</option>
                 </select>
             </div>
@@ -462,7 +472,7 @@ def get_chart(
             <div class="control">
                 <label>Provider Note</label>
                 <div class="muted" style="padding-top: 10px;">
-                    OANDA needs <code>OANDA_ACCESS_TOKEN</code>. FOREX.com is not wired yet.
+                    No-key sources: binance, yfinance, stooq. OANDA, Alpha Vantage, and Twelve Data need credentials.
                 </div>
             </div>
             <div class="control">
@@ -538,12 +548,24 @@ def get_chart(
                             <div class="muted">Useful for forex-style symbols like EURUSD and GBPUSD.</div>
                         </div>
                         <div class="list-item">
+                            <strong>Stooq</strong>
+                            <div class="muted">No-key public CSV source, best for daily or higher timeframe charts.</div>
+                        </div>
+                        <div class="list-item">
                             <strong>OANDA</strong>
                             <div class="muted">Requires an API token in your environment.</div>
                         </div>
                         <div class="list-item">
-                            <strong>FOREX.com</strong>
-                            <div class="muted">Official API access is account-gated, so it is not yet wired into this backend.</div>
+                            <strong>Alpha Vantage</strong>
+                            <div class="muted">Works with forex, crypto, equities, and proxy index or commodity symbols using an API key.</div>
+                        </div>
+                        <div class="list-item">
+                            <strong>Twelve Data</strong>
+                            <div class="muted">Useful for forex, crypto, indices, and commodities with a single time-series endpoint.</div>
+                        </div>
+                        <div class="list-item">
+                            <strong>Other brokers</strong>
+                            <div class="muted">FXCM and Pepperstone are not wired yet in this backend because their access flow is SDK or account-platform specific.</div>
                         </div>
                     </div>
                 </div>

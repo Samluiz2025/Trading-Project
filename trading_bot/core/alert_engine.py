@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import os
 import time
 from dataclasses import dataclass, field
+
+import requests
 
 from trading_bot.core.data_fetcher import FetchConfig, fetch_ohlc
 from trading_bot.core.market_structure import detect_market_structure
@@ -26,6 +29,14 @@ class AlertState:
     last_trend: str | None = None
     last_setup_signature: str | None = None
     active_zone_keys: set[str] = field(default_factory=set)
+
+
+@dataclass(frozen=True)
+class TelegramConfig:
+    """Configuration required to send Telegram bot alerts."""
+
+    bot_token: str
+    chat_id: str
 
 
 def monitor_symbol(config: MonitorConfig, state: AlertState | None = None) -> tuple[list[str], AlertState]:
@@ -90,8 +101,13 @@ def run_monitoring_loop(
     """Continuously monitor configured symbols and print new alerts."""
 
     state_by_symbol = {config.symbol.upper(): AlertState() for config in monitor_configs}
+    telegram_config = load_telegram_config()
     print("[INFO] Trading bot monitor started.")
     print(f"[INFO] Polling every {poll_interval_seconds} seconds.")
+    if telegram_config is not None:
+        print("[INFO] Telegram alerts are enabled.")
+    else:
+        print("[INFO] Telegram alerts are disabled. Set TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to enable them.")
 
     while True:
         for config in monitor_configs:
@@ -101,10 +117,41 @@ def run_monitoring_loop(
                 state_by_symbol[symbol_key] = next_state
                 for alert in alerts:
                     print(alert)
+                    send_telegram_alert(alert, telegram_config)
             except Exception as exc:
                 print(f"[ERROR] {symbol_key} monitor failed: {exc}")
 
         time.sleep(poll_interval_seconds)
+
+
+def load_telegram_config() -> TelegramConfig | None:
+    """Load Telegram settings from environment variables."""
+
+    bot_token = os.getenv("TELEGRAM_BOT_TOKEN")
+    chat_id = os.getenv("TELEGRAM_CHAT_ID")
+    if not bot_token or not chat_id:
+        return None
+
+    return TelegramConfig(bot_token=bot_token, chat_id=chat_id)
+
+
+def send_telegram_alert(message: str, telegram_config: TelegramConfig | None) -> None:
+    """Send an alert message to Telegram when configuration is available."""
+
+    if telegram_config is None:
+        return
+
+    url = f"https://api.telegram.org/bot{telegram_config.bot_token}/sendMessage"
+    payload = {
+        "chat_id": telegram_config.chat_id,
+        "text": message,
+    }
+
+    try:
+        response = requests.post(url, json=payload, timeout=10)
+        response.raise_for_status()
+    except requests.RequestException as exc:
+        print(f"[ERROR] Telegram alert failed: {exc}")
 
 
 def _detect_bias_change_alert(symbol: str, new_trend: str, state: AlertState) -> str | None:
