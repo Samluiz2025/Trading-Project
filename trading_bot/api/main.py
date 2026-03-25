@@ -7,19 +7,22 @@ from pathlib import Path
 from typing import Literal
 
 import pandas as pd
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import Body, FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
 
-from trading_bot.core.ai_engine import get_model_status, predict_signal, train_model
+from trading_bot.core.ai_engine import get_model_status, predict_signal, record_trade_result, train_model
 from trading_bot.core.data_fetcher import DataFetchError, FetchConfig, fetch_ohlc
+from trading_bot.core.journal import ensure_trade_logged, get_recent_journal, update_trade_result
 from trading_bot.core.market_structure import detect_market_structure
+from trading_bot.core.multi_timeframe import build_multi_timeframe_state
 from trading_bot.core.news_engine import (
     JsonEconomicCalendarProvider,
     build_news_alerts,
     fetch_market_moving_events,
     split_symbol_currencies,
 )
+from trading_bot.core.performance_tracker import build_performance_snapshot
 from trading_bot.core.strategy_engine import generate_trade_setup
 from trading_bot.core.supply_demand import detect_supply_demand_zones
 
@@ -39,16 +42,10 @@ app.mount("/frontend", StaticFiles(directory=FRONTEND_DIR), name="frontend")
 
 
 @app.get("/")
-def root() -> HTMLResponse:
-    """Serve the TradingView-based dashboard from the application root."""
+def root() -> FileResponse:
+    """Serve the upgraded dashboard frontend from the application root."""
 
-    return get_tradingview_page(
-        symbol="FX:EURUSD",
-        interval="15",
-        backend_symbol="EURUSD",
-        backend_interval="15m",
-        source="auto",
-    )
+    return FileResponse(FRONTEND_DIR / "index.html")
 
 
 @app.get("/data")
@@ -58,59 +55,91 @@ def get_frontend_data(
     limit: int = Query(default=200, ge=20, le=1000, description="Number of candles."),
     source: DataSource = Query(default="auto", description="OHLC data source."),
 ) -> dict:
-    """Return frontend-ready dashboard data from the existing backend engines."""
+    """Return the complete platform state for the dashboard."""
 
     try:
-        candles = fetch_ohlc(
-            FetchConfig(
-                symbol=symbol,
-                interval=interval,
-                limit=limit,
-                source=source,
-            )
-        )
-        zones = detect_supply_demand_zones(candles, symbol=symbol, timeframe=interval)
         news_provider = _load_default_news_provider()
         current_time = datetime.now(UTC)
-        news_events = fetch_market_moving_events(
-            provider=news_provider,
-            currencies=list(split_symbol_currencies(symbol)),
-            current_time=current_time,
-        )
-        setup_payload = generate_trade_setup(
-            candles,
+        state = build_multi_timeframe_state(
             symbol=symbol,
-            timeframe=interval,
-            news_events=news_events,
+            source=source,
+            htf_intervals=("4h", "1h"),
+            ltf_intervals=(interval, "5m" if interval != "5m" else "15m"),
+            limit=max(limit, 220),
+            news_provider=news_provider,
             current_time=current_time,
-            use_ai=True,
         )
         alerts = _build_frontend_alerts(
             symbol=symbol,
-            setup_payload=setup_payload,
-            news_events=news_events,
+            state=state,
             current_time=current_time,
         )
     except DataFetchError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Dashboard data build failed: {exc}") from exc
 
-    setup_list = [setup_payload["setup"]] if setup_payload["setup"] else []
+    setup_list = [state["raw_setup"]] if state.get("raw_setup") else []
+    if state.get("active_strategy") and state.get("entry") is not None:
+        ensure_trade_logged(
+            symbol=symbol,
+            strategy=state["active_strategy"],
+            entry=float(state["entry"]),
+            stop_loss=float(state["sl"]),
+            take_profit=float(state["tp"]),
+            confluences=state["confluences"],
+            confidence=int(state["confidence"]),
+            timeframe=interval,
+        )
+
+    journal_entries = get_recent_journal(limit=12)
+    performance = build_performance_snapshot()
     return {
         "symbol": symbol.upper(),
         "interval": interval,
         "source": source,
-        "technical_bias": setup_payload["technical_bias"],
-        "news_bias": setup_payload["news_bias"],
-        "final_bias": setup_payload["final_bias"],
-        "confidence": setup_payload["confidence"],
-        "ai_prediction": setup_payload.get("ai_prediction", "NO TRADE"),
-        "ai_confidence": setup_payload.get("ai_confidence", 0),
-        "agreement_with_strategy": setup_payload.get("agreement_with_strategy", False),
-        "latest_price": setup_payload["latest_price"],
+        "technical_bias": state["technical_bias"],
+        "news_bias": state["news_bias"],
+        "final_bias": state["final_bias"],
+        "confidence": state["confidence"],
+        "latest_price": state["latest_price"],
+        "active_strategy": state.get("active_strategy"),
+        "entry": state.get("entry"),
+        "sl": state.get("sl"),
+        "tp": state.get("tp"),
+        "confluences": state.get("confluences", []),
+        "chart_overlays": state.get("chart_overlays", {}),
+        "htf": state["htf"],
+        "ltf": state["ltf"],
+        "news_events": state["news_events"],
+        "ranking_score": state.get("ranking_score", 0),
+        "historical_win_rate": state.get("historical_win_rate", 0),
         "setups": setup_list,
-        "zones": zones,
+        "zones": state["htf"]["zones"],
         "alerts": alerts,
+        "journal": journal_entries,
+        "performance": performance,
     }
+
+
+@app.get("/journal")
+def get_journal(limit: int = Query(default=25, ge=1, le=200)) -> dict:
+    """Return recent journal entries for the dashboard and later analytics."""
+
+    try:
+        return {"entries": get_recent_journal(limit=limit)}
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to load journal: {exc}") from exc
+
+
+@app.get("/performance")
+def get_performance() -> dict:
+    """Return live performance statistics from journal and research history."""
+
+    try:
+        return build_performance_snapshot()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Failed to build performance snapshot: {exc}") from exc
 
 
 @app.get("/train")
@@ -196,6 +225,37 @@ def ai_status() -> dict:
     """Return model availability and current performance metrics."""
 
     return asdict(get_model_status())
+
+
+@app.post("/record_trade_result")
+def record_trade_result_endpoint(
+    symbol: str = Body(..., embed=True),
+    timeframe: str = Body(..., embed=True),
+    outcome: str = Body(..., embed=True),
+    pnl: float = Body(..., embed=True),
+    features: dict | None = Body(default=None, embed=True),
+) -> dict:
+    """Record a completed trade result for performance tracking and future retraining."""
+
+    try:
+        result = record_trade_result(
+            symbol=symbol,
+            timeframe=timeframe,
+            outcome=outcome,
+            pnl=pnl,
+            features=features,
+        )
+        update_trade_result(
+            symbol=symbol,
+            timeframe=timeframe,
+            outcome=outcome,
+            pnl=pnl,
+            strategy=(features or {}).get("strategy"),
+        )
+        result["journal_updated"] = True
+        return result
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @app.get("/bias")
@@ -1597,39 +1657,58 @@ def _load_default_news_provider() -> JsonEconomicCalendarProvider | None:
 
 def _build_frontend_alerts(
     symbol: str,
-    setup_payload: dict,
-    news_events: list,
+    state: dict,
     current_time: datetime,
 ) -> list[dict]:
     """Build a compact set of frontend alerts from current backend state."""
 
     alerts: list[dict] = []
 
-    if setup_payload["setup"]:
+    if state.get("entry") is not None and state.get("active_strategy"):
         alerts.append(
             {
                 "type": "setup",
-                "message": f"New setup: {symbol.upper()} {setup_payload['setup']['signal']} at {setup_payload['setup']['entry']:.4f}",
+                "message": (
+                    f"Strategy {state['active_strategy']} active on {symbol.upper()} "
+                    f"at {state['entry']:.4f}"
+                ),
             }
         )
 
-    if setup_payload["final_bias"] != setup_payload["technical_bias"]:
+    if state["final_bias"] != state["technical_bias"]:
         alerts.append(
             {
                 "type": "bias_change",
                 "message": (
-                    f"Bias shift: technical {setup_payload['technical_bias'].upper()} "
-                    f"vs news {setup_payload['news_bias'].upper()} -> final {setup_payload['final_bias'].upper()}"
+                    f"Bias shift: technical {state['technical_bias'].upper()} "
+                    f"vs news {state['news_bias'].upper()} -> final {state['final_bias'].upper()}"
                 ),
             }
         )
 
     upcoming_alerts, released_alerts, sudden_alerts = build_news_alerts(
         symbol=symbol,
-        events=news_events,
+        events=[
+            _deserialize_news_event(event)
+            for event in state.get("news_events", [])
+        ],
         current_time=current_time,
     )
     for alert in upcoming_alerts + released_alerts + sudden_alerts:
         alerts.append({"type": "news", "message": alert["message"]})
 
     return alerts[:10]
+
+
+def _deserialize_news_event(event: dict):
+    from trading_bot.core.news_engine import EconomicEvent
+
+    return EconomicEvent(
+        event_name=event["event_name"],
+        currency=event["currency"],
+        impact=event["impact"],
+        time=datetime.fromisoformat(event["time"].replace("Z", "+00:00")).astimezone(UTC),
+        forecast=event.get("forecast"),
+        previous=event.get("previous"),
+        actual=event.get("actual"),
+    )

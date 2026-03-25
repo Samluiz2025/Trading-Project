@@ -1,0 +1,7 @@
+{
+  "trained_at": "2026-03-25T13:54:57.967047+00:00",
+  "accuracy": 0.9278350515463918,
+  "dataset_rows": 481,
+  "feature_count": 17,
+  "win_rate": null
+}

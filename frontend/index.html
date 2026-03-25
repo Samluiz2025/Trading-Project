@@ -3,22 +3,26 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Trading Intelligence Dashboard</title>
+    <title>Trading Intelligence Platform</title>
     <link rel="stylesheet" href="/frontend/style.css">
 </head>
 <body>
     <main class="page">
         <header class="hero">
             <div>
-                <p class="eyebrow">Trading Intelligence System</p>
-                <h1>Execution Dashboard</h1>
+                <p class="eyebrow">Trading Intelligence Platform</p>
+                <h1>Multi-Timeframe Execution Dashboard</h1>
                 <p class="subtitle">
-                    TradingView chart plus your technical bias, news bias, final bias,
-                    confidence, setups, zones, and latest alerts.
+                    Higher-timeframe bias and zones, lower-timeframe confirmation, news, AI,
+                    trade journal, and research performance in one live workspace.
                 </p>
             </div>
             <div class="hero-controls">
-                <label class="field">
+                <label class="field field-wide">
+                    <span>TradingView Symbol</span>
+                    <input id="tv-symbol-input" list="tv-symbol-list" value="FX:EURUSD" placeholder="FX:EURUSD or BINANCE:BTCUSDT">
+                </label>
+                <label class="field field-wide">
                     <span>Symbol</span>
                     <input id="symbol-input" list="symbol-list" value="EURUSD" placeholder="EURUSD">
                 </label>
@@ -35,94 +39,166 @@
                         <option value="mock">mock</option>
                     </select>
                 </label>
+                <label class="field">
+                    <span>LTF Entry TF</span>
+                    <select id="interval-select">
+                        <option value="5m">5m</option>
+                        <option value="15m" selected>15m</option>
+                    </select>
+                </label>
                 <button id="refresh-button" type="button">Refresh</button>
+                <datalist id="tv-symbol-list">
+                    <option value="FX:EURUSD"></option>
+                    <option value="FX:GBPUSD"></option>
+                    <option value="FX:USDJPY"></option>
+                    <option value="FX:AUDUSD"></option>
+                    <option value="FX:USDCAD"></option>
+                    <option value="OANDA:XAUUSD"></option>
+                    <option value="OANDA:USOIL"></option>
+                    <option value="CAPITALCOM:US500"></option>
+                    <option value="CAPITALCOM:US100"></option>
+                    <option value="CAPITALCOM:US30"></option>
+                    <option value="CAPITALCOM:GER40"></option>
+                    <option value="CAPITALCOM:UK100"></option>
+                    <option value="BINANCE:BTCUSDT"></option>
+                    <option value="BINANCE:ETHUSDT"></option>
+                    <option value="BINANCE:SOLUSDT"></option>
+                    <option value="BINANCE:BNBUSDT"></option>
+                    <option value="BINANCE:XRPUSDT"></option>
+                </datalist>
                 <datalist id="symbol-list">
                     <option value="EURUSD"></option>
                     <option value="GBPUSD"></option>
                     <option value="USDJPY"></option>
                     <option value="AUDUSD"></option>
                     <option value="USDCAD"></option>
-                    <option value="BTCUSDT"></option>
-                    <option value="ETHUSDT"></option>
-                    <option value="SOLUSDT"></option>
                     <option value="XAUUSD"></option>
                     <option value="USOIL"></option>
                     <option value="SPX"></option>
                     <option value="NAS100"></option>
                     <option value="DJI"></option>
                     <option value="GER40"></option>
+                    <option value="UK100"></option>
+                    <option value="BTCUSDT"></option>
+                    <option value="ETHUSDT"></option>
+                    <option value="SOLUSDT"></option>
+                    <option value="BNBUSDT"></option>
+                    <option value="XRPUSDT"></option>
                 </datalist>
             </div>
         </header>
 
-        <section class="chart-panel panel">
-            <div class="panel-head">
-                <div>
-                    <h2>Chart</h2>
-                    <p id="chart-caption">TradingView widget</p>
-                </div>
-                <div class="mini-badges">
-                    <span class="mini-badge">Dark Theme</span>
-                    <span class="mini-badge">15m</span>
-                </div>
-            </div>
-            <div id="tradingview-widget" class="tradingview-widget"></div>
-        </section>
+        <section class="layout">
+            <section class="left-column">
+                <article class="panel chart-panel">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Chart</h2>
+                            <p id="chart-caption">TradingView widget</p>
+                        </div>
+                        <div class="mini-badges">
+                            <span class="mini-badge">Dark</span>
+                            <span class="mini-badge">15m default</span>
+                            <span class="mini-badge" id="live-price-badge">Price: -</span>
+                        </div>
+                    </div>
+                    <div id="tradingview-widget" class="tradingview-widget"></div>
+                    <div class="overlay-strip" id="overlay-strip"></div>
+                </article>
 
-        <section class="dashboard-grid">
-            <article class="panel bias-panel">
-                <div class="panel-head">
-                    <div>
-                        <h2>Final Bias</h2>
-                        <p>Combined technical and news view</p>
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Smart Overlays</h2>
+                            <p>Only the latest active HTF zones, FVG, order block, liquidity, and trade levels.</p>
+                        </div>
                     </div>
-                </div>
-                <div id="final-bias" class="final-bias neutral">NEUTRAL</div>
-                <div class="confidence-row">
-                    <span>Confidence</span>
-                    <strong id="confidence">0%</strong>
-                </div>
-                <div class="bias-compare">
-                    <div class="metric-card">
-                        <span class="metric-label">Technical Bias</span>
-                        <strong id="technical-bias">-</strong>
+                    <div class="split-grid">
+                        <div class="list-panel" id="htf-panel"></div>
+                        <div class="list-panel" id="overlay-panel"></div>
                     </div>
-                    <div class="metric-card">
-                        <span class="metric-label">News Bias</span>
-                        <strong id="news-bias">-</strong>
-                    </div>
-                </div>
-            </article>
+                </article>
+            </section>
 
-            <article class="panel">
-                <div class="panel-head">
-                    <div>
-                        <h2>Active Trade Setups</h2>
-                        <p>Entry, stop loss, and target</p>
+            <aside class="right-column">
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Bias Panel</h2>
+                            <p>HTF + news + final decision</p>
+                        </div>
                     </div>
-                </div>
-                <div id="setups-panel" class="list-panel"></div>
-            </article>
+                    <div id="final-bias" class="final-bias neutral">NEUTRAL</div>
+                    <div class="metrics-grid">
+                        <div class="metric-card">
+                            <span class="metric-label">HTF Bias</span>
+                            <strong id="htf-bias">-</strong>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">News Bias</span>
+                            <strong id="news-bias">-</strong>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Technical Bias</span>
+                            <strong id="technical-bias">-</strong>
+                        </div>
+                        <div class="metric-card">
+                            <span class="metric-label">Confidence</span>
+                            <strong id="confidence">0%</strong>
+                        </div>
+                    </div>
+                </article>
 
-            <article class="panel">
-                <div class="panel-head">
-                    <div>
-                        <h2>Supply / Demand Zones</h2>
-                        <p>Latest detected reaction areas</p>
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Active Setup</h2>
+                            <p>Best-ranked aligned execution candidate</p>
+                        </div>
                     </div>
-                </div>
-                <div id="zones-panel" class="list-panel"></div>
-            </article>
+                    <div id="setup-panel" class="list-panel"></div>
+                </article>
 
-            <article class="panel alerts-panel">
-                <div class="panel-head">
-                    <div>
-                        <h2>Alerts</h2>
-                        <p>Setup, bias change, and news events</p>
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Setup Map</h2>
+                            <p>Visual entry, stop, target, and reward snapshot</p>
+                        </div>
                     </div>
-                </div>
-                <div id="alerts-panel" class="list-panel"></div>
-            </article>
+                    <div id="setup-map-panel" class="setup-map-panel"></div>
+                </article>
+
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Alerts Feed</h2>
+                            <p>Setup, bias, and news alerts</p>
+                        </div>
+                    </div>
+                    <div id="alerts-panel" class="list-panel compact-list"></div>
+                </article>
+
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Trade Journal</h2>
+                            <p>Recent logged trades and outcomes</p>
+                        </div>
+                    </div>
+                    <div id="journal-panel" class="list-panel compact-list"></div>
+                </article>
+
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Performance Stats</h2>
+                            <p>Live win rate, profit factor, and top strategies</p>
+                        </div>
+                    </div>
+                    <div id="performance-panel" class="list-panel compact-list"></div>
+                </article>
+            </aside>
         </section>
     </main>
 

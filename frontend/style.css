@@ -1,10 +1,10 @@
 :root {
-    --bg: #0b1118;
-    --panel: #121b24;
-    --panel-2: #1b2733;
-    --border: #253647;
+    --bg: #0a1119;
+    --panel: rgba(17, 27, 38, 0.96);
+    --panel-2: #152332;
+    --border: #24384a;
     --text: #eef4fb;
-    --muted: #9aa9b8;
+    --muted: #9db0c1;
     --green: #2ecc71;
     --red: #ff6b6b;
     --yellow: #f1c40f;
@@ -21,44 +21,44 @@ body {
     font-family: "Segoe UI", Tahoma, sans-serif;
     color: var(--text);
     background:
-        radial-gradient(circle at top left, rgba(93, 173, 226, 0.08), transparent 26%),
-        radial-gradient(circle at bottom right, rgba(46, 204, 113, 0.08), transparent 22%),
+        radial-gradient(circle at top left, rgba(93, 173, 226, 0.12), transparent 30%),
+        radial-gradient(circle at bottom right, rgba(46, 204, 113, 0.09), transparent 26%),
         var(--bg);
 }
 
 .page {
-    max-width: 1480px;
+    max-width: 1580px;
     margin: 0 auto;
     padding: 24px;
 }
 
 .hero,
 .panel {
-    background: rgba(18, 27, 36, 0.96);
+    background: var(--panel);
     border: 1px solid var(--border);
-    border-radius: 18px;
+    border-radius: 20px;
 }
 
 .hero {
     display: flex;
     justify-content: space-between;
-    gap: 20px;
+    gap: 22px;
     flex-wrap: wrap;
-    padding: 22px;
+    padding: 24px;
     margin-bottom: 18px;
 }
 
 .eyebrow {
     margin: 0 0 8px;
     color: var(--blue);
-    text-transform: uppercase;
-    letter-spacing: 0.12em;
     font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
 }
 
 .hero h1 {
-    margin: 0 0 8px;
-    font-size: 34px;
+    margin: 0 0 10px;
+    font-size: 35px;
 }
 
 .subtitle {
@@ -80,9 +80,13 @@ body {
     gap: 6px;
 }
 
+.field-wide input {
+    min-width: 180px;
+}
+
 .field span,
-.panel-head p,
-.metric-label {
+.metric-label,
+.panel-head p {
     color: var(--muted);
 }
 
@@ -96,7 +100,7 @@ button {
 
 input,
 select {
-    min-width: 140px;
+    min-width: 120px;
     padding: 10px 12px;
     background: var(--panel-2);
     color: var(--text);
@@ -105,23 +109,30 @@ select {
 button {
     padding: 11px 16px;
     background: linear-gradient(135deg, #2ecc71, #27ae60);
-    color: #0b1118;
+    color: #091119;
     font-weight: 700;
     cursor: pointer;
 }
 
-.chart-panel {
-    margin-bottom: 18px;
-    overflow: hidden;
+.layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1.7fr) minmax(360px, 0.95fr);
+    gap: 18px;
+}
+
+.left-column,
+.right-column {
+    display: grid;
+    gap: 18px;
 }
 
 .panel-head {
-    padding: 16px 18px;
-    border-bottom: 1px solid var(--border);
     display: flex;
     justify-content: space-between;
-    align-items: center;
     gap: 12px;
+    align-items: center;
+    padding: 16px 18px;
+    border-bottom: 1px solid var(--border);
 }
 
 .panel-head h2 {
@@ -137,9 +148,12 @@ button {
 .mini-badges {
     display: flex;
     gap: 8px;
+    flex-wrap: wrap;
 }
 
 .mini-badge {
+    display: inline-flex;
+    align-items: center;
     padding: 6px 10px;
     border-radius: 999px;
     border: 1px solid var(--border);
@@ -148,89 +162,52 @@ button {
 }
 
 .tradingview-widget {
-    height: 620px;
+    height: 610px;
 }
 
-.dashboard-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 18px;
-}
-
-.bias-panel {
-    padding-bottom: 18px;
-}
-
-.final-bias {
-    margin: 18px;
-    padding: 18px;
-    border-radius: 18px;
-    text-align: center;
-    font-size: 40px;
-    font-weight: 800;
-    text-transform: uppercase;
-    letter-spacing: 0.05em;
-    background: rgba(255, 255, 255, 0.03);
-}
-
-.final-bias.buy,
-.final-bias.bullish,
-.final-bias.strong-bullish {
-    color: var(--green);
-    border: 1px solid rgba(46, 204, 113, 0.25);
-}
-
-.final-bias.sell,
-.final-bias.bearish,
-.final-bias.strong-bearish {
-    color: var(--red);
-    border: 1px solid rgba(255, 107, 107, 0.25);
-}
-
-.final-bias.neutral,
-.final-bias.ranging {
-    color: var(--yellow);
-    border: 1px solid rgba(241, 196, 15, 0.25);
-}
-
-.confidence-row,
-.bias-compare {
-    margin: 0 18px;
-}
-
-.confidence-row {
+.overlay-strip {
     display: flex;
-    justify-content: space-between;
-    align-items: center;
-    margin-bottom: 16px;
-    font-size: 15px;
+    flex-wrap: wrap;
+    gap: 10px;
+    padding: 14px 18px 18px;
 }
 
-.bias-compare {
+.overlay-chip,
+.tag {
+    display: inline-flex;
+    align-items: center;
+    padding: 5px 9px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.overlay-chip {
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.split-grid {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-}
-
-.metric-card {
-    padding: 14px;
-    border-radius: 14px;
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid rgba(255, 255, 255, 0.04);
-}
-
-.metric-card strong {
-    display: block;
-    margin-top: 6px;
-    font-size: 18px;
-    text-transform: uppercase;
 }
 
 .list-panel {
     padding: 16px;
     display: grid;
     gap: 12px;
-    min-height: 160px;
+}
+
+.setup-map-panel {
+    padding: 16px 18px 20px;
+    display: grid;
+    gap: 14px;
+}
+
+.compact-list {
+    max-height: 310px;
+    overflow: auto;
 }
 
 .card {
@@ -241,7 +218,7 @@ button {
 }
 
 .card h3 {
-    margin: 0 0 8px;
+    margin: 8px 0 6px;
     font-size: 15px;
 }
 
@@ -251,34 +228,149 @@ button {
     font-size: 14px;
 }
 
-.tag {
-    display: inline-flex;
-    align-items: center;
-    padding: 4px 8px;
-    border-radius: 999px;
-    font-size: 11px;
-    font-weight: 700;
+.metrics-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    padding: 0 18px 18px;
+}
+
+.metric-card {
+    padding: 14px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.metric-card strong {
+    display: block;
+    margin-top: 6px;
+    font-size: 18px;
     text-transform: uppercase;
 }
 
-.tag.buy,
-.tag.demand,
-.tag.setup {
-    color: var(--green);
-    background: rgba(46, 204, 113, 0.14);
+.setup-map {
+    display: grid;
+    gap: 14px;
 }
 
-.tag.sell,
-.tag.supply,
-.tag.bias_change {
-    color: var(--red);
+.price-ladder {
+    position: relative;
+    display: grid;
+    gap: 10px;
+    padding: 14px;
+    border-radius: 16px;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.price-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border-radius: 12px;
+    font-size: 14px;
+}
+
+.price-row.entry {
+    background: rgba(93, 173, 226, 0.14);
+}
+
+.price-row.sl {
     background: rgba(255, 107, 107, 0.14);
 }
 
+.price-row.tp {
+    background: rgba(46, 204, 113, 0.14);
+}
+
+.price-row.live {
+    background: rgba(241, 196, 15, 0.12);
+}
+
+.price-label {
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 12px;
+}
+
+.price-value {
+    font-weight: 700;
+}
+
+.rr-strip {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 10px;
+}
+
+.rr-card {
+    padding: 12px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.rr-card strong {
+    display: block;
+    margin-top: 6px;
+    font-size: 18px;
+}
+
+.confluence-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+}
+
+.final-bias {
+    margin: 18px;
+    padding: 20px;
+    border-radius: 18px;
+    text-align: center;
+    font-size: 38px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    background: rgba(255, 255, 255, 0.03);
+}
+
+.final-bias.buy,
+.final-bias.bullish,
+.final-bias.strong-bullish,
+.tag.buy,
+.tag.win,
+.tag.bullish {
+    color: var(--green);
+    background: rgba(46, 204, 113, 0.15);
+}
+
+.final-bias.sell,
+.final-bias.bearish,
+.final-bias.strong-bearish,
+.tag.sell,
+.tag.loss,
+.tag.bearish {
+    color: var(--red);
+    background: rgba(255, 107, 107, 0.15);
+}
+
+.final-bias.neutral,
+.final-bias.ranging,
 .tag.neutral,
+.tag.open,
 .tag.news {
     color: var(--yellow);
-    background: rgba(241, 196, 15, 0.14);
+    background: rgba(241, 196, 15, 0.15);
+}
+
+.tag.zone,
+.tag.info {
+    color: var(--blue);
+    background: rgba(93, 173, 226, 0.15);
 }
 
 .empty-state {
@@ -286,12 +378,20 @@ button {
     color: var(--muted);
 }
 
-@media (max-width: 960px) {
-    .dashboard-grid {
+@media (max-width: 1160px) {
+    .layout {
+        grid-template-columns: 1fr;
+    }
+}
+
+@media (max-width: 860px) {
+    .split-grid,
+    .metrics-grid,
+    .rr-strip {
         grid-template-columns: 1fr;
     }
 
     .tradingview-widget {
-        height: 480px;
+        height: 460px;
     }
 }
