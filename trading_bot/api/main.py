@@ -3,16 +3,17 @@ from __future__ import annotations
 import json
 from typing import Literal
 
-from fastapi import FastAPI, Query
+import pandas as pd
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import HTMLResponse
 
-from trading_bot.core.data_fetcher import FetchConfig, fetch_ohlc
+from trading_bot.core.data_fetcher import DataFetchError, FetchConfig, fetch_ohlc
 from trading_bot.core.market_structure import detect_market_structure
 from trading_bot.core.strategy_engine import generate_trade_setup
 from trading_bot.core.supply_demand import detect_supply_demand_zones
 
 
-DataSource = Literal["auto", "binance", "mock"]
+DataSource = Literal["auto", "binance", "mock", "yfinance", "oanda"]
 
 
 app = FastAPI(
@@ -41,15 +42,18 @@ def get_bias(
 ) -> dict:
     """Return market bias and recent structure information."""
 
-    candles = fetch_ohlc(
-        FetchConfig(
-            symbol=symbol,
-            interval=interval,
-            limit=limit,
-            source=source,
+    try:
+        candles = fetch_ohlc(
+            FetchConfig(
+                symbol=symbol,
+                interval=interval,
+                limit=limit,
+                source=source,
+            )
         )
-    )
-    structure = detect_market_structure(candles)
+        structure = detect_market_structure(candles)
+    except DataFetchError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return {
         "symbol": symbol.upper(),
@@ -77,15 +81,18 @@ def get_zones(
 ) -> dict:
     """Return recent supply and demand zones."""
 
-    candles = fetch_ohlc(
-        FetchConfig(
-            symbol=symbol,
-            interval=interval,
-            limit=limit,
-            source=source,
+    try:
+        candles = fetch_ohlc(
+            FetchConfig(
+                symbol=symbol,
+                interval=interval,
+                limit=limit,
+                source=source,
+            )
         )
-    )
-    zones = detect_supply_demand_zones(candles, symbol=symbol, timeframe=interval)
+        zones = detect_supply_demand_zones(candles, symbol=symbol, timeframe=interval)
+    except DataFetchError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return {
         "symbol": symbol.upper(),
@@ -105,15 +112,18 @@ def get_setup(
 ) -> dict:
     """Return the current rule-based trade setup candidate."""
 
-    candles = fetch_ohlc(
-        FetchConfig(
-            symbol=symbol,
-            interval=interval,
-            limit=limit,
-            source=source,
+    try:
+        candles = fetch_ohlc(
+            FetchConfig(
+                symbol=symbol,
+                interval=interval,
+                limit=limit,
+                source=source,
+            )
         )
-    )
-    return generate_trade_setup(candles, symbol=symbol, timeframe=interval)
+        return generate_trade_setup(candles, symbol=symbol, timeframe=interval)
+    except DataFetchError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/chart_data")
@@ -129,27 +139,31 @@ def get_chart_data(
     This endpoint is designed for the browser chart and later alert consumers.
     """
 
-    candles = fetch_ohlc(
-        FetchConfig(
-            symbol=symbol,
-            interval=interval,
-            limit=limit,
-            source=source,
+    try:
+        candles = fetch_ohlc(
+            FetchConfig(
+                symbol=symbol,
+                interval=interval,
+                limit=limit,
+                source=source,
+            )
         )
-    )
-    structure = detect_market_structure(candles)
-    zones = detect_supply_demand_zones(candles, symbol=symbol, timeframe=interval)
-    setup_payload = generate_trade_setup(candles, symbol=symbol, timeframe=interval)
+        structure = detect_market_structure(candles)
+        zones = detect_supply_demand_zones(candles, symbol=symbol, timeframe=interval)
+        setup_payload = generate_trade_setup(candles, symbol=symbol, timeframe=interval)
+    except DataFetchError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
 
     return {
         "symbol": symbol.upper(),
         "interval": interval,
         "source": source,
         "trend": structure["trend"],
-        "candles": [_serialize_candle(candle) for candle in candles.to_dict("records")],
-        "swings": structure["swings"][-20:],
+        "candles": [_serialize_chart_candle(candle) for candle in candles.to_dict("records")],
+        "swings": [_serialize_swing_for_chart(swing) for swing in structure["swings"][-20:]],
         "zones": zones,
         "setup": setup_payload["setup"],
+        "latest_price": float(candles.iloc[-1]["close"]),
     }
 
 
@@ -368,6 +382,12 @@ def get_chart(
             padding: 16px;
             color: var(--muted);
         }}
+        .hint {{
+            margin-top: 6px;
+            color: var(--muted);
+            font-size: 12px;
+            line-height: 1.4;
+        }}
         @media (max-width: 980px) {{
             .layout {{
                 grid-template-columns: 1fr;
@@ -389,21 +409,32 @@ def get_chart(
                 </p>
             </div>
             <div class="chips">
-                <div class="chip">Supported sources: auto, binance, mock</div>
+                <div class="chip">Supported sources: auto, binance, yfinance, oanda, mock</div>
                 <div class="chip">Run command: python -m uvicorn trading_bot.api.main:app --reload</div>
             </div>
         </section>
 
         <section class="controls">
             <div class="control">
-                <label for="symbol-select">Symbol</label>
-                <select id="symbol-select">
-                    <option value="BTCUSDT">BTCUSDT</option>
-                    <option value="ETHUSDT">ETHUSDT</option>
-                    <option value="SOLUSDT">SOLUSDT</option>
-                    <option value="BNBUSDT">BNBUSDT</option>
-                    <option value="XRPUSDT">XRPUSDT</option>
-                </select>
+                <label for="symbol-input">Symbol</label>
+                <input id="symbol-input" list="symbol-list" value="{symbol}" placeholder="Type any symbol">
+                <datalist id="symbol-list">
+                    <option value="BTCUSDT"></option>
+                    <option value="ETHUSDT"></option>
+                    <option value="SOLUSDT"></option>
+                    <option value="BNBUSDT"></option>
+                    <option value="XRPUSDT"></option>
+                    <option value="ADAUSDT"></option>
+                    <option value="DOGEUSDT"></option>
+                    <option value="AVAXUSDT"></option>
+                    <option value="EURUSD"></option>
+                    <option value="GBPUSD"></option>
+                    <option value="USDJPY"></option>
+                    <option value="AUDUSD"></option>
+                    <option value="USDCAD"></option>
+                    <option value="XAUUSD"></option>
+                </datalist>
+                <div class="hint">Examples: BTCUSDT, ETHUSDT, EURUSD, GBPUSD, XAUUSD</div>
             </div>
             <div class="control">
                 <label for="interval-select">Interval</label>
@@ -419,12 +450,25 @@ def get_chart(
                 <select id="source-select">
                     <option value="auto">auto</option>
                     <option value="binance">binance</option>
+                    <option value="yfinance">yfinance</option>
+                    <option value="oanda">oanda</option>
                     <option value="mock">mock</option>
                 </select>
             </div>
             <div class="control">
                 <label for="limit-input">Candles</label>
                 <input id="limit-input" type="number" min="20" max="500" step="20" value="{limit}">
+            </div>
+            <div class="control">
+                <label>Provider Note</label>
+                <div class="muted" style="padding-top: 10px;">
+                    OANDA needs <code>OANDA_ACCESS_TOKEN</code>. FOREX.com is not wired yet.
+                </div>
+            </div>
+            <div class="control">
+                <label>Auto Refresh</label>
+                <button type="button" id="auto-refresh-button" onclick="toggleAutoRefresh()">Start Auto Refresh</button>
+                <div class="hint">Refreshes the dashboard every 15 seconds.</div>
             </div>
             <div class="control">
                 <label>Refresh</label>
@@ -460,7 +504,7 @@ def get_chart(
                             <div class="metric-value" id="metric-source">-</div>
                         </div>
                         <div class="metric">
-                            <div class="metric-label">Latest Close</div>
+                            <div class="metric-label">Latest Price</div>
                             <div class="metric-value" id="metric-price">-</div>
                         </div>
                     </div>
@@ -479,15 +523,40 @@ def get_chart(
                     </div>
                     <div id="zones-container" class="list"></div>
                 </div>
+
+                <div class="panel">
+                    <div class="panel-header">
+                        <div class="panel-title">Source Notes</div>
+                    </div>
+                    <div class="list">
+                        <div class="list-item">
+                            <strong>Binance</strong>
+                            <div class="muted">Good for crypto pairs like BTCUSDT and ETHUSDT.</div>
+                        </div>
+                        <div class="list-item">
+                            <strong>Yahoo Finance</strong>
+                            <div class="muted">Useful for forex-style symbols like EURUSD and GBPUSD.</div>
+                        </div>
+                        <div class="list-item">
+                            <strong>OANDA</strong>
+                            <div class="muted">Requires an API token in your environment.</div>
+                        </div>
+                        <div class="list-item">
+                            <strong>FOREX.com</strong>
+                            <div class="muted">Official API access is account-gated, so it is not yet wired into this backend.</div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </section>
     </div>
 
     <script>
         const initialPayload = {chart_payload_json};
-        document.getElementById("symbol-select").value = initialPayload.symbol;
+        document.getElementById("symbol-input").value = initialPayload.symbol;
         document.getElementById("interval-select").value = initialPayload.interval;
         document.getElementById("source-select").value = initialPayload.source;
+        let autoRefreshHandle = null;
 
         const chart = LightweightCharts.createChart(document.getElementById("chart-container"), {{
             width: document.getElementById("chart-container").clientWidth,
@@ -529,7 +598,7 @@ def get_chart(
             document.getElementById("metric-symbol").textContent = payload.symbol;
             document.getElementById("metric-interval").textContent = payload.interval;
             document.getElementById("metric-source").textContent = payload.source;
-            document.getElementById("metric-price").textContent = formatNumber(latestCandle?.close);
+            document.getElementById("metric-price").textContent = formatNumber(payload.latest_price ?? latestCandle?.close);
 
             const trendBadge = document.getElementById("trend-badge");
             trendBadge.textContent = payload.trend;
@@ -581,30 +650,74 @@ def get_chart(
                 }}))
             );
 
-            candleSeries.setMarkers(
-                payload.swings.map(swing => ({{
-                    time: swing.time,
-                    position: swing.type === "high" ? "aboveBar" : "belowBar",
-                    color: swing.type === "high" ? "#f5b041" : "#5dade2",
-                    shape: swing.type === "high" ? "arrowDown" : "arrowUp",
-                    text: swing.label || swing.type,
-                }}))
-            );
+            if (typeof candleSeries.setMarkers === "function") {{
+                candleSeries.setMarkers(
+                    payload.swings.map(swing => ({{
+                        time: swing.time,
+                        position: swing.type === "high" ? "aboveBar" : "belowBar",
+                        color: swing.type === "high" ? "#f5b041" : "#5dade2",
+                        shape: swing.type === "high" ? "arrowDown" : "arrowUp",
+                        text: swing.label || swing.type,
+                    }}))
+                );
+            }}
 
             chart.timeScale().fitContent();
         }}
 
         async function updateChart() {{
-            const symbol = document.getElementById("symbol-select").value;
+            const symbol = document.getElementById("symbol-input").value.trim();
             const interval = document.getElementById("interval-select").value;
             const source = document.getElementById("source-select").value;
             const limit = document.getElementById("limit-input").value;
 
+            if (!symbol) {{
+                alert("Please enter a symbol.");
+                return;
+            }}
+
             const response = await fetch(`/chart_data?symbol=${{symbol}}&interval=${{interval}}&limit=${{limit}}&source=${{source}}`);
+            if (!response.ok) {{
+                const errorPayload = await response.json();
+                alert(errorPayload.detail || "Failed to load chart data.");
+                return;
+            }}
             const payload = await response.json();
             updateChartSeries(payload);
             updateInfo(payload);
         }}
+
+        function debounce(fn, delay) {{
+            let timeoutId = null;
+            return (...args) => {{
+                clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => fn(...args), delay);
+            }};
+        }}
+
+        function toggleAutoRefresh() {{
+            const button = document.getElementById("auto-refresh-button");
+            if (autoRefreshHandle) {{
+                clearInterval(autoRefreshHandle);
+                autoRefreshHandle = null;
+                button.textContent = "Start Auto Refresh";
+                return;
+            }}
+
+            autoRefreshHandle = setInterval(() => {{
+                updateChart().catch(error => console.error("Auto-refresh failed:", error));
+            }}, 15000);
+            button.textContent = "Stop Auto Refresh";
+        }}
+
+        const debouncedUpdate = debounce(() => {{
+            updateChart().catch(error => console.error("Chart update failed:", error));
+        }}, 350);
+
+        document.getElementById("symbol-input").addEventListener("change", debouncedUpdate);
+        document.getElementById("interval-select").addEventListener("change", debouncedUpdate);
+        document.getElementById("source-select").addEventListener("change", debouncedUpdate);
+        document.getElementById("limit-input").addEventListener("change", debouncedUpdate);
 
         updateChartSeries(initialPayload);
         updateInfo(initialPayload);
@@ -639,4 +752,27 @@ def _serialize_candle(candle: dict) -> dict:
         "high": float(candle["high"]),
         "low": float(candle["low"]),
         "close": float(candle["close"]),
+    }
+
+
+def _serialize_chart_candle(candle: dict) -> dict:
+    """Format candles for Lightweight Charts using Unix timestamps."""
+
+    timestamp = candle["time"]
+    return {
+        "time": int(timestamp.timestamp()),
+        "time_iso": timestamp.isoformat(),
+        "open": float(candle["open"]),
+        "high": float(candle["high"]),
+        "low": float(candle["low"]),
+        "close": float(candle["close"]),
+    }
+
+
+def _serialize_swing_for_chart(swing: dict) -> dict:
+    """Convert swing timestamps to Unix seconds for the browser chart."""
+
+    return {
+        **swing,
+        "time": int(pd.Timestamp(swing["time"]).timestamp()),
     }
