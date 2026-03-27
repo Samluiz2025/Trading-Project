@@ -10,6 +10,7 @@ def build_performance_snapshot() -> dict:
     journal = get_recent_journal(limit=500)
     research_results = load_performance_results()
 
+    rejected = [entry for entry in journal if entry.get("status") == "NO_TRADE"]
     closed = [entry for entry in journal if entry.get("result") in {"WIN", "LOSS"}]
     wins = [entry for entry in closed if entry.get("result") == "WIN"]
     losses = [entry for entry in closed if entry.get("result") == "LOSS"]
@@ -55,6 +56,7 @@ def build_performance_snapshot() -> dict:
         "profit_factor": profit_factor,
         "total_trades": len(journal),
         "closed_trades": len(closed),
+        "rejected_trades": len(rejected),
         "best_concepts": [{"name": name, "count": count} for name, count in concept_counter.most_common(5)],
         "strongest_confluence_combinations": [
             {"name": name, "count": count}

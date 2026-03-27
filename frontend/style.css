@@ -378,6 +378,15 @@ button {
     color: var(--muted);
 }
 
+.journal-day {
+    padding: 10px 12px 2px;
+    color: var(--blue);
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+}
+
 @media (max-width: 1160px) {
     .layout {
         grid-template-columns: 1fr;

@@ -11,10 +11,10 @@
         <header class="hero">
             <div>
                 <p class="eyebrow">Trading Intelligence Platform</p>
-                <h1>Multi-Timeframe Execution Dashboard</h1>
+                <h1>Strict Multi-Strategy Dashboard</h1>
                 <p class="subtitle">
-                    Higher-timeframe bias and zones, lower-timeframe confirmation, news, AI,
-                    trade journal, and research performance in one live workspace.
+                    Daily bias, H1 execution, optional M30 refinement, strict filtering,
+                    trade journal, alerts, and performance in one live workspace.
                 </p>
             </div>
             <div class="hero-controls">
@@ -40,10 +40,10 @@
                     </select>
                 </label>
                 <label class="field">
-                    <span>LTF Entry TF</span>
+                    <span>Execution View</span>
                     <select id="interval-select">
-                        <option value="5m">5m</option>
-                        <option value="15m" selected>15m</option>
+                        <option value="1h" selected>H1</option>
+                        <option value="30m">M30 refinement</option>
                     </select>
                 </label>
                 <button id="refresh-button" type="button">Refresh</button>
@@ -98,7 +98,7 @@
                         </div>
                         <div class="mini-badges">
                             <span class="mini-badge">Dark</span>
-                            <span class="mini-badge">15m default</span>
+                            <span class="mini-badge">H1 default</span>
                             <span class="mini-badge" id="live-price-badge">Price: -</span>
                         </div>
                     </div>
@@ -135,11 +135,11 @@
                             <strong id="htf-bias">-</strong>
                         </div>
                         <div class="metric-card">
-                            <span class="metric-label">News Bias</span>
+                            <span class="metric-label">H1 Bias</span>
                             <strong id="news-bias">-</strong>
                         </div>
                         <div class="metric-card">
-                            <span class="metric-label">Technical Bias</span>
+                            <span class="metric-label">Status</span>
                             <strong id="technical-bias">-</strong>
                         </div>
                         <div class="metric-card">

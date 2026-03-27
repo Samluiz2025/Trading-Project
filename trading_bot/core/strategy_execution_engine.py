@@ -66,19 +66,9 @@ def evaluate_strict_execution_setup(config: ExecutionConfig) -> dict:
             source=config.source,  # type: ignore[arg-type]
         )
     )
-    m15_candles = fetch_ohlc(
-        FetchConfig(
-            symbol=config.symbol,
-            interval="15m",
-            limit=max(config.primary_limit, 320),
-            source=config.source,  # type: ignore[arg-type]
-        )
-    )
-
     validate_ohlc_dataframe(daily_candles)
     validate_ohlc_dataframe(h4_candles)
     validate_ohlc_dataframe(primary_candles)
-    validate_ohlc_dataframe(m15_candles)
 
     daily_bias = detect_bias(daily_candles)
     daily_zones = detect_supply_demand_zones(daily_candles, symbol=config.symbol, timeframe=config.daily_interval)
@@ -104,43 +94,28 @@ def evaluate_strict_execution_setup(config: ExecutionConfig) -> dict:
             )
 
     structure_result = detect_mss_bos(
-        m15_candles,
-        tf="15m",
+        execution_candles,
+        tf=execution_timeframe,
         minimum_breaks=config.bos_confirmation_count,
     )
-    if not structure_result["confirmed"]:
-        structure_result = detect_mss_bos(
-            execution_candles,
-            tf=execution_timeframe,
-            minimum_breaks=config.bos_confirmation_count,
-        )
 
     liquidity_result = detect_liquidity(
-        m15_candles,
-        tf="15m",
+        execution_candles,
+        tf=execution_timeframe,
         tolerance_ratio=config.equal_level_tolerance_ratio,
     )
-    if not liquidity_result["confirmed"]:
-        liquidity_result = detect_liquidity(
-            execution_candles,
-            tf=execution_timeframe,
-            tolerance_ratio=config.equal_level_tolerance_ratio,
-        )
 
-    inducement_result = detect_inducement(m15_candles, tf="15m")
-    if not inducement_result["confirmed"]:
-        inducement_result = detect_inducement(execution_candles, tf=execution_timeframe)
+    inducement_result = detect_inducement(execution_candles, tf=execution_timeframe)
 
     order_block_result = _pick_first_confirmed_block(
         symbol=config.symbol,
         candidates=[
-            ("15m", m15_candles),
             (execution_timeframe, execution_candles),
             (config.fallback_interval, h4_candles),
         ],
     )
     breaker_block_result = detect_breaker_block(
-        m15_candles if order_block_result.get("tf") == "15m" else execution_candles,
+        execution_candles if order_block_result.get("tf") == execution_timeframe else h4_candles,
         order_block_result=order_block_result,
     )
     active_block = breaker_block_result if breaker_block_result["confirmed"] else order_block_result
@@ -148,7 +123,6 @@ def evaluate_strict_execution_setup(config: ExecutionConfig) -> dict:
         anchor_zone=active_block["zone"],
         max_distance_ratio=config.fvg_ob_distance_ratio,
         candidates=[
-            ("15m", m15_candles),
             (execution_timeframe, execution_candles),
             (config.fallback_interval, h4_candles),
         ],
@@ -164,7 +138,7 @@ def evaluate_strict_execution_setup(config: ExecutionConfig) -> dict:
             {"tf": "H4", "dataframe": h4_candles},
             {"tf": "H1", "dataframe": primary_candles},
         ],
-        execution_candles=m15_candles,
+        execution_candles=execution_candles,
         atr_period=config.atr_period,
         tp_atr_multiplier=config.tp_atr_multiplier,
     )

@@ -109,6 +109,46 @@ def get_recent_journal(limit: int = 20) -> list[dict[str, Any]]:
     return list(reversed(entries[-limit:]))
 
 
+def log_rejected_analysis(
+    *,
+    symbol: str,
+    strategy: str,
+    missing: list[str],
+    timeframe: str,
+    source: str = "auto",
+    message: str = "No valid setup available",
+) -> dict[str, Any] | None:
+    entries = load_journal_entries()
+    signature = "|".join([symbol.upper(), strategy, timeframe, "NO_TRADE", ",".join(sorted(missing))])
+    if any(entry_row.get("signature") == signature for entry_row in entries):
+        return None
+
+    payload = {
+        "id": signature,
+        "signature": signature,
+        "symbol": symbol.upper(),
+        "strategy": strategy,
+        "entry": None,
+        "stop_loss": None,
+        "take_profit": None,
+        "confluences": [],
+        "confidence": 0,
+        "timeframe": timeframe,
+        "source": source,
+        "timeframes_used": [timeframe],
+        "profit_factor": None,
+        "timestamp": datetime.now(UTC).isoformat(),
+        "status": "NO_TRADE",
+        "result": None,
+        "rr_achieved": None,
+        "missing": missing,
+        "message": message,
+    }
+    entries.append(payload)
+    save_journal_entries(entries[-500:])
+    return payload
+
+
 def update_open_trade_outcomes(default_source: str = "auto") -> list[dict[str, Any]]:
     """
     Check open journaled trades against the latest candle and close them on TP/SL.

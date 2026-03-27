@@ -1,0 +1,1223 @@
+[
+  {
+    "id": "EURUSD|SMC|1h|NO_TRADE|Bias mismatch",
+    "signature": "EURUSD|SMC|1h|NO_TRADE|Bias mismatch",
+    "symbol": "EURUSD",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T19:01:24.017572+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "GBPUSD|SMC|1h|NO_TRADE|Bias mismatch,No FVG,No OB",
+    "signature": "GBPUSD|SMC|1h|NO_TRADE|Bias mismatch,No FVG,No OB",
+    "symbol": "GBPUSD",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T19:01:33.236487+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch",
+      "No OB",
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "USDJPY|SMC|1h|159.0955",
+    "signature": "USDJPY|SMC|1h|159.0955",
+    "symbol": "USDJPY",
+    "strategy": "SMC",
+    "entry": 159.0955,
+    "stop_loss": 158.8766,
+    "take_profit": 159.201,
+    "confluences": [
+      "Daily Bias",
+      "H1 Structure",
+      "BOS/MSS",
+      "Inducement Confirmed",
+      "Order Block",
+      "FVG"
+    ],
+    "confidence": 60,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1d",
+      "1h",
+      "30m"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T19:01:41.880236+00:00",
+    "status": "WIN",
+    "result": "WIN",
+    "rr_achieved": 0.48,
+    "close_reason": "TAKE_PROFIT_HIT",
+    "closed_at": "2026-03-25T19:04:39.172813+00:00"
+  },
+  {
+    "id": "AUDUSD|SMC|1h|0.6977",
+    "signature": "AUDUSD|SMC|1h|0.6977",
+    "symbol": "AUDUSD",
+    "strategy": "SMC",
+    "entry": 0.6977,
+    "stop_loss": 0.6994,
+    "take_profit": 0.6962,
+    "confluences": [
+      "Daily Bias",
+      "H1 Structure",
+      "BOS/MSS",
+      "Inducement Confirmed",
+      "Order Block",
+      "FVG"
+    ],
+    "confidence": 60,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1d",
+      "1h",
+      "30m"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T19:01:51.988993+00:00",
+    "status": "WIN",
+    "result": "WIN",
+    "rr_achieved": 0.88,
+    "close_reason": "TAKE_PROFIT_HIT",
+    "closed_at": "2026-03-25T19:04:40.946390+00:00"
+  },
+  {
+    "id": "USDCAD|SMC|1h|NO_TRADE|Bias mismatch,No FVG,No OB",
+    "signature": "USDCAD|SMC|1h|NO_TRADE|Bias mismatch,No FVG,No OB",
+    "symbol": "USDCAD",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T19:02:00.816373+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch",
+      "No OB",
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "USDCHF|SMC|1h|NO_TRADE|Bias mismatch,No FVG",
+    "signature": "USDCHF|SMC|1h|NO_TRADE|Bias mismatch,No FVG",
+    "symbol": "USDCHF",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T19:02:09.940263+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch",
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "USDCHF|SMC|1h|NO_TRADE|Bias mismatch",
+    "signature": "USDCHF|SMC|1h|NO_TRADE|Bias mismatch",
+    "symbol": "USDCHF",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T19:04:10.419726+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "NZDUSD|SMC|1h|0.5821",
+    "signature": "NZDUSD|SMC|1h|0.5821",
+    "symbol": "NZDUSD",
+    "strategy": "SMC",
+    "entry": 0.5821,
+    "stop_loss": 0.583,
+    "take_profit": 0.581,
+    "confluences": [
+      "Daily Bias",
+      "H1 Structure",
+      "BOS/MSS",
+      "Inducement Confirmed",
+      "Order Block",
+      "FVG"
+    ],
+    "confidence": 60,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1d",
+      "1h",
+      "30m"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T19:04:21.150581+00:00",
+    "status": "WIN",
+    "result": "WIN",
+    "rr_achieved": 1.22,
+    "close_reason": "TAKE_PROFIT_HIT",
+    "closed_at": "2026-03-25T19:04:42.953830+00:00"
+  },
+  {
+    "id": "EURJPY|SMC|1h|NO_TRADE|Bias mismatch,No FVG",
+    "signature": "EURJPY|SMC|1h|NO_TRADE|Bias mismatch,No FVG",
+    "symbol": "EURJPY",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T19:04:29.305764+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch",
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "GBPJPY|SMC|1h|NO_TRADE|Bias mismatch,No FVG",
+    "signature": "GBPJPY|SMC|1h|NO_TRADE|Bias mismatch,No FVG",
+    "symbol": "GBPJPY",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T19:04:37.095167+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch",
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "EURUSD|SMC|1h|NO_TRADE|No FVG,No OB",
+    "signature": "EURUSD|SMC|1h|NO_TRADE|No FVG,No OB",
+    "symbol": "EURUSD",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T19:05:00.420823+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "No OB",
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "AUDUSD|SMC|1h|0.6963",
+    "signature": "AUDUSD|SMC|1h|0.6963",
+    "symbol": "AUDUSD",
+    "strategy": "SMC",
+    "entry": 0.6963,
+    "stop_loss": 0.6974,
+    "take_profit": 0.6949,
+    "confluences": [
+      "Daily Bias",
+      "H1 Structure",
+      "BOS/MSS",
+      "Inducement Confirmed",
+      "Order Block",
+      "FVG"
+    ],
+    "confidence": 60,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1d",
+      "1h",
+      "30m"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T19:05:27.411066+00:00",
+    "status": "WIN",
+    "result": "WIN",
+    "rr_achieved": 1.27,
+    "close_reason": "TAKE_PROFIT_HIT",
+    "closed_at": "2026-03-25T19:06:14.697303+00:00"
+  },
+  {
+    "id": "USDCAD|SMC|1h|NO_TRADE|No FVG",
+    "signature": "USDCAD|SMC|1h|NO_TRADE|No FVG",
+    "symbol": "USDCAD",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T19:07:15.447412+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "NZDUSD|SMC|1h|NO_TRADE|No FVG",
+    "signature": "NZDUSD|SMC|1h|NO_TRADE|No FVG",
+    "symbol": "NZDUSD",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T19:07:33.082890+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "GBPUSD|SMC|1h|NO_TRADE|Bias mismatch",
+    "signature": "GBPUSD|SMC|1h|NO_TRADE|Bias mismatch",
+    "symbol": "GBPUSD",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T19:12:32.747806+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "EURJPY|SMC|1h|NO_TRADE|Bias mismatch",
+    "signature": "EURJPY|SMC|1h|NO_TRADE|Bias mismatch",
+    "symbol": "EURJPY",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T19:25:12.480799+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "EURJPY|SMC|1h|NO_TRADE|No FVG",
+    "signature": "EURJPY|SMC|1h|NO_TRADE|No FVG",
+    "symbol": "EURJPY",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-25T20:01:58.976669+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "USDJPY|SMC|1h|NO_TRADE|No FVG,No inducement",
+    "signature": "USDJPY|SMC|1h|NO_TRADE|No FVG,No inducement",
+    "symbol": "USDJPY",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T05:38:50.495027+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "No inducement",
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "USDJPY|SMC|1h|NO_TRADE|Bias mismatch",
+    "signature": "USDJPY|SMC|1h|NO_TRADE|Bias mismatch",
+    "symbol": "USDJPY",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "yfinance",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T05:39:16.893374+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "USDCHF|SMC|1h|NO_TRADE|No FVG",
+    "signature": "USDCHF|SMC|1h|NO_TRADE|No FVG",
+    "symbol": "USDCHF",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T05:39:41.542263+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "NZDUSD|SMC|1h|NO_TRADE|Bias mismatch",
+    "signature": "NZDUSD|SMC|1h|NO_TRADE|Bias mismatch",
+    "symbol": "NZDUSD",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T06:02:26.263051+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "EURJPY|SMC|1h|NO_TRADE|Bias mismatch,No FVG,No OB",
+    "signature": "EURJPY|SMC|1h|NO_TRADE|Bias mismatch,No FVG,No OB",
+    "symbol": "EURJPY",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T06:02:34.953049+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch",
+      "No OB",
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "AUDUSD|SMC|1h|NO_TRADE|Bias mismatch",
+    "signature": "AUDUSD|SMC|1h|NO_TRADE|Bias mismatch",
+    "symbol": "AUDUSD",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T06:04:55.305698+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "USDCHF|SMC|1h|0.7916",
+    "signature": "USDCHF|SMC|1h|0.7916",
+    "symbol": "USDCHF",
+    "strategy": "SMC",
+    "entry": 0.7916,
+    "stop_loss": 0.7908,
+    "take_profit": 0.7924,
+    "confluences": [
+      "Daily Bias",
+      "H1 Structure",
+      "BOS/MSS",
+      "Inducement Confirmed",
+      "Order Block",
+      "FVG"
+    ],
+    "confidence": 60,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1d",
+      "1h",
+      "30m"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T06:07:13.398921+00:00",
+    "status": "WIN",
+    "result": "WIN",
+    "rr_achieved": 1.0,
+    "close_reason": "TAKE_PROFIT_HIT",
+    "closed_at": "2026-03-26T06:07:33.954306+00:00"
+  },
+  {
+    "id": "USDJPY|SMC|1h|NO_TRADE|Bias mismatch,No FVG",
+    "signature": "USDJPY|SMC|1h|NO_TRADE|Bias mismatch,No FVG",
+    "symbol": "USDJPY",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "yfinance",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T06:57:17.265528+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch",
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "USDCAD|SMC|1h|NO_TRADE|Bias mismatch,No FVG",
+    "signature": "USDCAD|SMC|1h|NO_TRADE|Bias mismatch,No FVG",
+    "symbol": "USDCAD",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T15:08:56.876724+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch",
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "USDJPY|SMC|1h|NO_TRADE|No FVG",
+    "signature": "USDJPY|SMC|1h|NO_TRADE|No FVG",
+    "symbol": "USDJPY",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "yfinance",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T15:09:01.455181+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "NZDUSD|SMC|1h|NO_TRADE|Bias mismatch,No FVG,No OB",
+    "signature": "NZDUSD|SMC|1h|NO_TRADE|Bias mismatch,No FVG,No OB",
+    "symbol": "NZDUSD",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T15:09:47.313251+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch",
+      "No OB",
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "GBPJPY|SMC|1h|NO_TRADE|Bias mismatch",
+    "signature": "GBPJPY|SMC|1h|NO_TRADE|Bias mismatch",
+    "symbol": "GBPJPY",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T15:10:15.253440+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "GBPUSD|SMC|1h|NO_TRADE|No FVG,No OB",
+    "signature": "GBPUSD|SMC|1h|NO_TRADE|No FVG,No OB",
+    "symbol": "GBPUSD",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T15:32:13.448285+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "No OB",
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "EURJPY|SMC|1h|NO_TRADE|No FVG,No OB",
+    "signature": "EURJPY|SMC|1h|NO_TRADE|No FVG,No OB",
+    "symbol": "EURJPY",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T15:38:56.127651+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "No OB",
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "USDJPY|SMC|1h|159.4825",
+    "signature": "USDJPY|SMC|1h|159.4825",
+    "symbol": "USDJPY",
+    "strategy": "SMC",
+    "entry": 159.4825,
+    "stop_loss": 159.3054,
+    "take_profit": 159.537,
+    "confluences": [
+      "Daily Bias",
+      "H1 Structure",
+      "BOS/MSS",
+      "Inducement Confirmed",
+      "Order Block",
+      "FVG"
+    ],
+    "confidence": 60,
+    "timeframe": "1h",
+    "source": "yfinance",
+    "timeframes_used": [
+      "1d",
+      "1h"
+    ],
+    "profit_factor": 4.85,
+    "timestamp": "2026-03-26T16:01:31.172141+00:00",
+    "status": "WIN",
+    "result": "WIN",
+    "rr_achieved": 0.31,
+    "close_reason": "TAKE_PROFIT_HIT",
+    "closed_at": "2026-03-26T16:02:44.850042+00:00"
+  },
+  {
+    "id": "USDCAD|SMC|1h|NO_TRADE|Bias mismatch",
+    "signature": "USDCAD|SMC|1h|NO_TRADE|Bias mismatch",
+    "symbol": "USDCAD",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T16:02:07.490885+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "USDCHF|SMC|1h|0.7918",
+    "signature": "USDCHF|SMC|1h|0.7918",
+    "symbol": "USDCHF",
+    "strategy": "SMC",
+    "entry": 0.7918,
+    "stop_loss": 0.7908,
+    "take_profit": 0.793,
+    "confluences": [
+      "Daily Bias",
+      "H1 Structure",
+      "BOS/MSS",
+      "Inducement Confirmed",
+      "Order Block",
+      "FVG"
+    ],
+    "confidence": 60,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1d",
+      "1h",
+      "30m"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T16:02:17.580960+00:00",
+    "status": "WIN",
+    "result": "WIN",
+    "rr_achieved": 1.2,
+    "close_reason": "TAKE_PROFIT_HIT",
+    "closed_at": "2026-03-26T16:02:46.388218+00:00"
+  },
+  {
+    "id": "USDCHF|SMC|1h|0.7930",
+    "signature": "USDCHF|SMC|1h|0.7930",
+    "symbol": "USDCHF",
+    "strategy": "SMC",
+    "entry": 0.793,
+    "stop_loss": 0.7917,
+    "take_profit": 0.7937,
+    "confluences": [
+      "Daily Bias",
+      "H1 Structure",
+      "BOS/MSS",
+      "Inducement Confirmed",
+      "Order Block",
+      "FVG"
+    ],
+    "confidence": 60,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1d",
+      "1h",
+      "30m"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T16:05:38.643993+00:00",
+    "status": "WIN",
+    "result": "WIN",
+    "rr_achieved": 0.54,
+    "close_reason": "TAKE_PROFIT_HIT",
+    "closed_at": "2026-03-26T16:06:07.633188+00:00"
+  },
+  {
+    "id": "USDJPY|SMC|1h|159.5585",
+    "signature": "USDJPY|SMC|1h|159.5585",
+    "symbol": "USDJPY",
+    "strategy": "SMC",
+    "entry": 159.5585,
+    "stop_loss": 159.3493,
+    "take_profit": 159.695,
+    "confluences": [
+      "Daily Bias",
+      "H1 Structure",
+      "BOS/MSS",
+      "Inducement Confirmed",
+      "Order Block",
+      "FVG"
+    ],
+    "confidence": 60,
+    "timeframe": "1h",
+    "source": "yfinance",
+    "timeframes_used": [
+      "1d",
+      "1h"
+    ],
+    "profit_factor": 6.9,
+    "timestamp": "2026-03-26T20:12:57.302826+00:00",
+    "status": "LOSS",
+    "result": "LOSS",
+    "rr_achieved": -1.0,
+    "close_reason": "STOP_LOSS_HIT",
+    "closed_at": "2026-03-26T20:14:59.631064+00:00"
+  },
+  {
+    "id": "USDJPY|SMC|1h|NO_TRADE|No FVG,No OB",
+    "signature": "USDJPY|SMC|1h|NO_TRADE|No FVG,No OB",
+    "symbol": "USDJPY",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "yfinance",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T20:13:17.251444+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "No OB",
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "USDCHF|SMC+BREAKOUT|1h|0.7930",
+    "signature": "USDCHF|SMC+BREAKOUT|1h|0.7930",
+    "symbol": "USDCHF",
+    "strategy": "SMC+BREAKOUT",
+    "entry": 0.793,
+    "stop_loss": 0.7917,
+    "take_profit": 0.7937,
+    "confluences": [
+      "Daily Bias",
+      "H1 Structure",
+      "BOS/MSS",
+      "Inducement Confirmed",
+      "Order Block",
+      "FVG",
+      "Consolidation",
+      "Strong breakout candle",
+      "Retest holds"
+    ],
+    "confidence": 82,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1d",
+      "1h",
+      "30m"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T20:56:43.759613+00:00",
+    "status": "WIN",
+    "result": "WIN",
+    "rr_achieved": 0.54,
+    "close_reason": "TAKE_PROFIT_HIT",
+    "closed_at": "2026-03-26T20:57:07.358494+00:00"
+  },
+  {
+    "id": "USDJPY|SMC|1h|NO_TRADE|Bias mismatch,No FVG,No OB",
+    "signature": "USDJPY|SMC|1h|NO_TRADE|Bias mismatch,No FVG,No OB",
+    "symbol": "USDJPY",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "yfinance",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T22:00:14.625924+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch",
+      "No OB",
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "GBPJPY|SMC|1h|NO_TRADE|No FVG",
+    "signature": "GBPJPY|SMC|1h|NO_TRADE|No FVG",
+    "symbol": "GBPJPY",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T22:01:30.522158+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "No FVG"
+    ],
+    "message": "No valid setup available"
+  },
+  {
+    "id": "AUDUSD|SMC|1h|0.6918",
+    "signature": "AUDUSD|SMC|1h|0.6918",
+    "symbol": "AUDUSD",
+    "strategy": "SMC",
+    "entry": 0.6918,
+    "stop_loss": 0.6934,
+    "take_profit": 0.6903,
+    "confluences": [
+      "Daily Bias",
+      "H1 Structure",
+      "BOS/MSS",
+      "Inducement Confirmed",
+      "Order Block",
+      "FVG"
+    ],
+    "confidence": 60,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1d",
+      "1h",
+      "30m"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T22:02:05.918096+00:00",
+    "status": "WIN",
+    "result": "WIN",
+    "rr_achieved": 0.94,
+    "close_reason": "TAKE_PROFIT_HIT",
+    "closed_at": "2026-03-26T22:02:58.906286+00:00"
+  },
+  {
+    "id": "NZDUSD|SMC|1h|0.5787",
+    "signature": "NZDUSD|SMC|1h|0.5787",
+    "symbol": "NZDUSD",
+    "strategy": "SMC",
+    "entry": 0.5787,
+    "stop_loss": 0.5799,
+    "take_profit": 0.5774,
+    "confluences": [
+      "Daily Bias",
+      "H1 Structure",
+      "BOS/MSS",
+      "Inducement Confirmed",
+      "Order Block",
+      "FVG"
+    ],
+    "confidence": 60,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1d",
+      "1h",
+      "30m"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T22:02:37.374822+00:00",
+    "status": "WIN",
+    "result": "WIN",
+    "rr_achieved": 1.08,
+    "close_reason": "TAKE_PROFIT_HIT",
+    "closed_at": "2026-03-26T22:03:00.465130+00:00"
+  },
+  {
+    "id": "GBPUSD|SMC|1h|1.3362",
+    "signature": "GBPUSD|SMC|1h|1.3362",
+    "symbol": "GBPUSD",
+    "strategy": "SMC",
+    "entry": 1.3362,
+    "stop_loss": 1.3382,
+    "take_profit": 1.3324,
+    "confluences": [
+      "Daily Bias",
+      "H1 Structure",
+      "BOS/MSS",
+      "Inducement Confirmed",
+      "Order Block",
+      "FVG"
+    ],
+    "confidence": 60,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1d",
+      "1h",
+      "30m"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T22:03:20.691040+00:00",
+    "status": "WIN",
+    "result": "WIN",
+    "rr_achieved": 1.9,
+    "close_reason": "TAKE_PROFIT_HIT",
+    "closed_at": "2026-03-27T00:24:56.507039+00:00"
+  },
+  {
+    "id": "GBPUSD|SMC+TREND|1h|1.3362",
+    "signature": "GBPUSD|SMC+TREND|1h|1.3362",
+    "symbol": "GBPUSD",
+    "strategy": "SMC+TREND",
+    "entry": 1.3362,
+    "stop_loss": 1.3382,
+    "take_profit": 1.3324,
+    "confluences": [
+      "Daily Bias",
+      "H1 Structure",
+      "BOS/MSS",
+      "Inducement Confirmed",
+      "Order Block",
+      "FVG",
+      "EMA50 < EMA200",
+      "Pullback to EMA50"
+    ],
+    "confidence": 82,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1d",
+      "1h",
+      "30m"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-26T22:07:04.188223+00:00",
+    "status": "WIN",
+    "result": "WIN",
+    "rr_achieved": 1.9,
+    "close_reason": "TAKE_PROFIT_HIT",
+    "closed_at": "2026-03-27T00:24:59.174866+00:00"
+  }
+]

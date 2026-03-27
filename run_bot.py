@@ -4,6 +4,7 @@ import argparse
 
 from trading_bot.core.alert_engine import MonitorConfig, run_monitoring_loop, run_strict_market_scanner
 from trading_bot.core.instrument_universe import get_instrument_universe
+from trading_bot.core.market_monitor import run_market_monitor
 from trading_bot.core.news_engine import JsonEconomicCalendarProvider
 
 
@@ -47,8 +48,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--mode",
         default="strict",
-        choices=["strict", "classic"],
-        help="Use strict full-confluence scanner or classic monitor loop.",
+        choices=["strict", "classic", "multi"],
+        help="Use legacy strict scanner, classic monitor loop, or the new multi-strategy monitor.",
     )
     parser.add_argument(
         "--news-calendar",
@@ -62,6 +63,15 @@ def main() -> None:
     """Build monitoring configs and start the real-time alert loop."""
 
     args = parse_args()
+    if args.mode == "multi":
+        run_market_monitor(
+            group=args.universe,
+            source=args.source,
+            poll_interval_seconds=args.poll_seconds,
+            use_m30_refinement=True,
+        )
+        return
+
     if args.mode == "strict":
         run_strict_market_scanner(
             group=args.universe,
