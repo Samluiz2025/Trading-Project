@@ -1,42 +1,41 @@
 from __future__ import annotations
 
 
-MAJOR_FOREX_PAIRS = [
+WATCHLIST_FOREX = [
     "EURUSD",
     "GBPUSD",
-    "USDJPY",
-    "AUDUSD",
-    "USDCAD",
     "USDCHF",
-    "NZDUSD",
-    "EURJPY",
-    "GBPJPY",
+    "USDJPY",
 ]
 
-MAJOR_INDICES = [
-    "SPX",
+WATCHLIST_METALS = [
+    "XAUUSD",
+]
+
+WATCHLIST_INDICES = [
     "NAS100",
-    "DJI",
-    "GER40",
-    "UK100",
-    "JP225",
 ]
 
-MAJOR_CRYPTO = [
+WATCHLIST_CRYPTO = [
     "BTCUSDT",
     "ETHUSDT",
-    "SOLUSDT",
-    "BNBUSDT",
-    "XRPUSDT",
 ]
+
+APPROVED_SYMBOLS = WATCHLIST_FOREX + WATCHLIST_METALS + WATCHLIST_INDICES + WATCHLIST_CRYPTO
 
 
 def get_instrument_universe(group: str = "all") -> list[str]:
     normalized = group.strip().lower()
     if normalized == "forex":
-        return MAJOR_FOREX_PAIRS
+        return WATCHLIST_FOREX
+    if normalized == "metals":
+        return WATCHLIST_METALS
     if normalized == "indices":
-        return MAJOR_INDICES
+        return WATCHLIST_INDICES
     if normalized == "crypto":
-        return MAJOR_CRYPTO
-    return MAJOR_FOREX_PAIRS + MAJOR_INDICES + MAJOR_CRYPTO
+        return WATCHLIST_CRYPTO
+    return APPROVED_SYMBOLS.copy()
+
+
+def is_supported_symbol(symbol: str) -> bool:
+    return str(symbol or "").strip().upper() in APPROVED_SYMBOLS

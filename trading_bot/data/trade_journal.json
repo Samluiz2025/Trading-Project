@@ -1219,5 +1219,32 @@
     "rr_achieved": 1.9,
     "close_reason": "TAKE_PROFIT_HIT",
     "closed_at": "2026-03-27T00:24:59.174866+00:00"
+  },
+  {
+    "id": "GBPJPY|SMC|1h|NO_TRADE|Bias mismatch,No FVG,No OB",
+    "signature": "GBPJPY|SMC|1h|NO_TRADE|Bias mismatch,No FVG,No OB",
+    "symbol": "GBPJPY",
+    "strategy": "SMC",
+    "entry": null,
+    "stop_loss": null,
+    "take_profit": null,
+    "confluences": [],
+    "confidence": 0,
+    "timeframe": "1h",
+    "source": "auto",
+    "timeframes_used": [
+      "1h"
+    ],
+    "profit_factor": null,
+    "timestamp": "2026-03-27T00:55:08.352679+00:00",
+    "status": "NO_TRADE",
+    "result": null,
+    "rr_achieved": null,
+    "missing": [
+      "Bias mismatch",
+      "No OB",
+      "No FVG"
+    ],
+    "message": "No valid setup available"
   }
 ]

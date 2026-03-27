@@ -16,6 +16,7 @@ class SmcConfig:
     ob_padding_ratio: float = 0.0007
     fvg_distance_ratio: float = 0.0025
     inducement_lookback: int = 24
+    risk_reward_ratio: float = 4.0
 
 
 def detect_daily_bias(data: pd.DataFrame) -> dict:
@@ -304,10 +305,12 @@ def generate_trade_setup(symbol: str, daily_data: pd.DataFrame, h1_data: pd.Data
     bias = "BUY" if "bullish" in daily_bias["bias"] else "SELL"
     if bias == "BUY":
         sl = round(zone_low - padding, 4)
-        tp = _find_external_liquidity(h1_data, side="BUY", reference_index=last_break["event"]["index"])
+        risk = abs(entry - sl)
+        tp = round(entry + (risk * active_config.risk_reward_ratio), 4)
     else:
         sl = round(zone_high + padding, 4)
-        tp = _find_external_liquidity(h1_data, side="SELL", reference_index=last_break["event"]["index"])
+        risk = abs(sl - entry)
+        tp = round(entry - (risk * active_config.risk_reward_ratio), 4)
 
     return {
         "status": "VALID_TRADE",
@@ -326,6 +329,7 @@ def generate_trade_setup(symbol: str, daily_data: pd.DataFrame, h1_data: pd.Data
             "FVG",
         ],
         "confidence_score": 72,
+        "risk_reward_ratio": active_config.risk_reward_ratio,
         "details": {
             "daily_bias": daily_bias,
             "h1_structure": h1_structure,
@@ -336,21 +340,9 @@ def generate_trade_setup(symbol: str, daily_data: pd.DataFrame, h1_data: pd.Data
             "order_block": order_block,
             "fvg": fvg,
             "refinement": _build_m30_refinement(m30_data, daily_bias["bias"]),
+            "risk_reward_ratio": active_config.risk_reward_ratio,
         },
     }
-
-
-def _find_external_liquidity(data: pd.DataFrame, side: str, reference_index: int) -> float:
-    swings = detect_swings(data, swing_window=2)
-    if side == "BUY":
-        highs = [item for item in swings if item["type"] == "high" and int(item["index"]) < reference_index]
-        if highs:
-            return round(float(highs[-1]["price"]), 4)
-        return round(float(data["high"].tail(40).max()), 4)
-    lows = [item for item in swings if item["type"] == "low" and int(item["index"]) < reference_index]
-    if lows:
-        return round(float(lows[-1]["price"]), 4)
-    return round(float(data["low"].tail(40).min()), 4)
 
 
 def _build_m30_refinement(m30_data: pd.DataFrame | None, bias: str) -> dict:

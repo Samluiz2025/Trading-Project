@@ -13,6 +13,7 @@ from trading_bot.core.alerts_store import load_alerts
 from trading_bot.core.backtester import backtest_symbol
 from trading_bot.core.confluence_engine import evaluate_symbol
 from trading_bot.core.data_fetcher import DataFetchError, FetchConfig, fetch_ohlc
+from trading_bot.core.instrument_universe import is_supported_symbol
 from trading_bot.core.journal import ensure_trade_logged, get_recent_journal, log_rejected_analysis
 from trading_bot.core.performance_tracker import build_performance_snapshot
 
@@ -45,8 +46,17 @@ def get_data(
     interval: Literal["15m", "30m", "1h"] = Query(default="1h"),
     source: DataSource = Query(default="auto"),
 ) -> dict:
+    symbol = symbol.upper()
+    if not is_supported_symbol(symbol):
+        return _error_payload(
+            symbol=symbol,
+            source=source,
+            interval=_normalize_execution_interval(interval),
+            message="Unsupported symbol. Use only: ETHUSDT, GBPUSD, EURUSD, BTCUSDT, XAUUSD, NAS100, USDCHF, USDJPY.",
+        )
+
     normalized_interval = _normalize_execution_interval(interval)
-    cache_key = f"data|{symbol.upper()}|{normalized_interval}|{source}"
+    cache_key = f"data|{symbol}|{normalized_interval}|{source}"
     cached = _cache_get(cache_key, DATA_TTL_SECONDS)
     if cached is not None:
         return cached
@@ -113,6 +123,14 @@ def backtest(
     symbol: str = Query(default="EURUSD"),
     source: DataSource = Query(default="auto"),
 ) -> dict:
+    symbol = symbol.upper()
+    if not is_supported_symbol(symbol):
+        return {
+            "status": "ERROR",
+            "message": "Unsupported symbol. Use only: ETHUSDT, GBPUSD, EURUSD, BTCUSDT, XAUUSD, NAS100, USDCHF, USDJPY.",
+            "symbol": symbol,
+        }
+
     try:
         daily_data = fetch_ohlc(FetchConfig(symbol=symbol, interval="1d", limit=260, source=source))
         h1_data = fetch_ohlc(FetchConfig(symbol=symbol, interval="1h", limit=420, source=source))

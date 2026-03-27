@@ -7,6 +7,8 @@ const state = {
     requestId: 0,
 };
 
+const APPROVED_SYMBOLS = new Set(["ETHUSDT", "GBPUSD", "EURUSD", "BTCUSDT", "XAUUSD", "NAS100", "USDCHF", "USDJPY"]);
+
 function inferTradingViewSymbol(symbol) {
     if (String(symbol || "").includes(":")) {
         return String(symbol).trim().toUpperCase();
@@ -18,16 +20,12 @@ function inferTradingViewSymbol(symbol) {
     const mapping = {
         EURUSD: "FX:EURUSD",
         GBPUSD: "FX:GBPUSD",
+        USDCHF: "FX:USDCHF",
         USDJPY: "FX:USDJPY",
-        AUDUSD: "FX:AUDUSD",
-        USDCAD: "FX:USDCAD",
         XAUUSD: "OANDA:XAUUSD",
-        USOIL: "OANDA:USOIL",
-        SPX: "CAPITALCOM:US500",
         NAS100: "CAPITALCOM:US100",
-        DJI: "CAPITALCOM:US30",
-        GER40: "CAPITALCOM:GER40",
-        UK100: "CAPITALCOM:UK100",
+        BTCUSDT: "BINANCE:BTCUSDT",
+        ETHUSDT: "BINANCE:ETHUSDT",
     };
     return mapping[normalized] || `FX:${normalized}`;
 }
@@ -47,13 +45,8 @@ function inferBackendFromTradingView(tvSymbol) {
         PEPPERSTONE: "yfinance",
     };
     const symbolMap = {
-        US500: "SPX",
         US100: "NAS100",
-        US30: "DJI",
-        GER40: "GER40",
-        UK100: "UK100",
         XAUUSD: "XAUUSD",
-        USOIL: "USOIL",
     };
     return {
         symbol: symbolMap[compact] || compact,
@@ -170,6 +163,7 @@ function renderSetup(payload) {
             `Entry: ${formatNumber(payload.entry)}`,
             `SL: ${formatNumber(payload.sl)}`,
             `TP: ${formatNumber(payload.tp)}`,
+            `Target RR: 1:4`,
             `Confidence: ${payload.confidence}`,
             `Confluences: ${(payload.confluences || []).join(", ")}`,
         ],
@@ -235,6 +229,7 @@ function renderSetupMap(payload, stateLabel) {
                 <div class="rr-card"><span class="metric-label">Risk</span><strong>${formatNumber(risk)}</strong></div>
                 <div class="rr-card"><span class="metric-label">Reward</span><strong>${formatNumber(reward)}</strong></div>
                 <div class="rr-card"><span class="metric-label">R:R</span><strong>${formatNumber(rr, 2)}</strong></div>
+                <div class="rr-card"><span class="metric-label">Target RR</span><strong>4.00</strong></div>
             </div>
             <div class="confluence-grid">
                 ${(payload.confluences || []).map((item) => `<span class="overlay-chip">${item}</span>`).join("")}
@@ -375,7 +370,9 @@ async function fetchDashboardData() {
 }
 
 function syncStateFromInputs() {
-    state.symbol = document.getElementById("symbol-input").value.trim().toUpperCase() || "EURUSD";
+    const requestedSymbol = document.getElementById("symbol-input").value.trim().toUpperCase() || "EURUSD";
+    state.symbol = APPROVED_SYMBOLS.has(requestedSymbol) ? requestedSymbol : "EURUSD";
+    document.getElementById("symbol-input").value = state.symbol;
     state.source = document.getElementById("source-select").value;
     state.interval = document.getElementById("interval-select").value;
     state.tradingViewSymbol = document.getElementById("tv-symbol-input").value.trim() || inferTradingViewSymbol(state.symbol);
@@ -384,7 +381,7 @@ function syncStateFromInputs() {
 function syncBackendInputsFromTradingView() {
     const inferred = inferBackendFromTradingView(document.getElementById("tv-symbol-input").value.trim());
     if (!inferred) return;
-    document.getElementById("symbol-input").value = inferred.symbol;
+    document.getElementById("symbol-input").value = APPROVED_SYMBOLS.has(inferred.symbol) ? inferred.symbol : "EURUSD";
     document.getElementById("source-select").value = inferred.source;
 }
 
