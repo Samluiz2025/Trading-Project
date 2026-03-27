@@ -110,6 +110,7 @@ function renderLoadingState() {
     document.getElementById("htf-panel").innerHTML = '<div class="empty-state">Refreshing timeframes...</div>';
     document.getElementById("overlay-panel").innerHTML = '<div class="empty-state">Refreshing overlays...</div>';
     document.getElementById("alerts-panel").innerHTML = '<div class="empty-state">Refreshing alerts...</div>';
+    document.getElementById("news-panel").innerHTML = '<div class="empty-state">Refreshing news...</div>';
 }
 
 function renderErrorState(message) {
@@ -120,6 +121,7 @@ function renderErrorState(message) {
     document.getElementById("overlay-panel").innerHTML = '<div class="empty-state">Error fetching data.</div>';
     document.getElementById("overlay-strip").innerHTML = '<span class="overlay-chip">Server error</span>';
     document.getElementById("alerts-panel").innerHTML = createCard("Error", [message || "Server error"], "sell", "error");
+    document.getElementById("news-panel").innerHTML = createCard("Error", [message || "Server error"], "sell", "error");
 }
 
 function renderBias(payload) {
@@ -349,6 +351,89 @@ function renderPerformance(performance) {
     container.innerHTML = cards.join("");
 }
 
+function renderWatchlist(payload) {
+    const container = document.getElementById("watchlist-panel");
+    const items = payload?.symbols || [];
+    if (!items.length) {
+        container.innerHTML = '<div class="empty-state">No watchlist data available.</div>';
+        return;
+    }
+
+    container.innerHTML = items.map((item) => {
+        const isActive = item.symbol === state.symbol;
+        const entryLabel = item.entry != null ? formatNumber(item.entry) : "-";
+        return `
+            <article class="card watchlist-item ${isActive ? "active" : ""}" data-symbol="${item.symbol}" data-source="${item.source}">
+                <div class="watchlist-head">
+                    <span class="watchlist-symbol">${item.symbol}</span>
+                    <span class="watchlist-status ${String(item.status || "").toLowerCase()}">${String(item.status || "").replace("_", " ")}</span>
+                </div>
+                <div class="watchlist-meta">
+                    <span class="watchlist-price">Price: ${formatNumber(item.latest_price)}</span>
+                    <span class="watchlist-price">Entry: ${entryLabel}</span>
+                </div>
+                <div class="watchlist-sub">Daily: ${item.daily_bias} | H1: ${item.h1_bias}</div>
+                <div class="watchlist-sub">Confidence: ${item.confidence} | Source: ${item.source}</div>
+            </article>
+        `;
+    }).join("");
+
+    container.querySelectorAll(".watchlist-item").forEach((element) => {
+        element.addEventListener("click", () => {
+            document.getElementById("symbol-input").value = element.dataset.symbol || "EURUSD";
+            document.getElementById("source-select").value = element.dataset.source || "auto";
+            document.getElementById("tv-symbol-input").value = inferTradingViewSymbol(element.dataset.symbol || "EURUSD");
+            refreshDashboard(true);
+        });
+    });
+}
+
+function renderNews(payload) {
+    const container = document.getElementById("news-panel");
+    if (!payload || payload.status === "ERROR") {
+        container.innerHTML = createCard("News error", [payload?.message || "Unable to load news."], "sell", "error");
+        return;
+    }
+    if (!payload.configured) {
+        container.innerHTML = createCard("News feed unavailable", [payload.message || "No news provider configured."], "neutral", "news");
+        return;
+    }
+
+    const cards = [
+        createCard(
+            `${payload.symbol} News Bias`,
+            [
+                `Pair bias: ${payload.pair_news_bias || "NEUTRAL"}`,
+                `Currencies: ${(payload.currencies || []).join(" / ")}`,
+                payload.message || "No relevant market-moving news in range.",
+            ],
+            "info",
+            "news",
+        ),
+    ];
+
+    (payload.events || []).slice(0, 6).forEach((event) => {
+        cards.push(
+            createCard(
+                `${event.currency} ${event.event_name}`,
+                [
+                    `Impact: ${String(event.impact || "").toUpperCase()}`,
+                    `Time: ${String(event.time || "").replace("T", " ").slice(0, 16)}`,
+                    `Forecast: ${event.forecast ?? "n/a"} | Previous: ${event.previous ?? "n/a"} | Actual: ${event.actual ?? "n/a"}`,
+                ],
+                event.market_moving ? "buy" : "info",
+                event.market_moving ? "moving" : "calendar",
+            )
+        );
+    });
+
+    if (!payload.events?.length) {
+        cards.push(createCard("No relevant news", ["No market-moving events found for this pair right now."], "neutral", "news"));
+    }
+
+    container.innerHTML = cards.join("");
+}
+
 async function fetchDashboardData() {
     const params = new URLSearchParams({
         symbol: state.symbol,
@@ -367,6 +452,26 @@ async function fetchDashboardData() {
         return { status: "ERROR", message: payload.message || "Error fetching data" };
     }
     return payload;
+}
+
+async function fetchWatchlistData() {
+    const response = await fetch(`/watchlist?source=${encodeURIComponent(state.source)}`);
+    const rawText = await response.text();
+    try {
+        return rawText ? JSON.parse(rawText) : { symbols: [] };
+    } catch {
+        return { symbols: [] };
+    }
+}
+
+async function fetchNewsData() {
+    const response = await fetch(`/news?symbol=${encodeURIComponent(state.symbol)}`);
+    const rawText = await response.text();
+    try {
+        return rawText ? JSON.parse(rawText) : { configured: false, events: [] };
+    } catch {
+        return { configured: false, events: [], message: "Error fetching news" };
+    }
 }
 
 function syncStateFromInputs() {
@@ -395,7 +500,11 @@ async function refreshDashboard(forceChart = false) {
     }
 
     try {
-        const payload = await fetchDashboardData();
+        const [payload, watchlistPayload, newsPayload] = await Promise.all([
+            fetchDashboardData(),
+            fetchWatchlistData(),
+            fetchNewsData(),
+        ]);
         if (requestId !== state.requestId) return;
 
         renderBias(payload);
@@ -405,6 +514,8 @@ async function refreshDashboard(forceChart = false) {
         renderAlerts(payload.alerts || []);
         renderJournal(payload.journal || []);
         renderPerformance(payload.performance || {});
+        renderWatchlist(watchlistPayload);
+        renderNews(newsPayload);
     } catch {
         if (requestId !== state.requestId) return;
         renderErrorState("Error fetching data");

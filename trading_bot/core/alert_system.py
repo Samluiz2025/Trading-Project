@@ -32,6 +32,22 @@ def send_alert(alert_payload: dict, telegram_config: TelegramConfig | None = Non
 
 
 def _format_alert_message(alert_payload: dict) -> str:
+    alert_type = str(alert_payload.get("type") or "").lower()
+
+    if alert_type == "monitor_online":
+        return f"[SCANNER ONLINE]\n{alert_payload.get('message')}"
+
+    if alert_type == "trade_closed":
+        return (
+            f"[TRADE {alert_payload.get('status', 'CLOSED')}]\n"
+            f"Pair: {alert_payload.get('pair')}\n"
+            f"Bias: {alert_payload.get('bias')}\n"
+            f"Entry: {float(alert_payload.get('entry') or 0):.4f}\n"
+            f"SL: {float(alert_payload.get('sl') or 0):.4f}\n"
+            f"TP: {float(alert_payload.get('tp') or 0):.4f}\n"
+            f"Strategies: {', '.join(alert_payload.get('strategies', []))}"
+        )
+
     if alert_payload.get("status") == "NO TRADE":
         return (
             f"[NO TRADE]\n"
@@ -41,12 +57,13 @@ def _format_alert_message(alert_payload: dict) -> str:
         )
 
     return (
-        f"[VALID SETUP]\n"
+        f"[SETUP ALERT]\n"
         f"Pair: {alert_payload.get('pair')}\n"
         f"Bias: {alert_payload.get('bias')}\n"
         f"Entry: {float(alert_payload.get('entry') or 0):.4f}\n"
         f"SL: {float(alert_payload.get('sl') or 0):.4f}\n"
         f"TP: {float(alert_payload.get('tp') or 0):.4f}\n"
+        f"RR: 1:4\n"
         f"Confidence: {alert_payload.get('confidence')}\n"
         f"Strategies: {', '.join(alert_payload.get('strategies', []))}\n"
         f"Confluences: {', '.join(alert_payload.get('confluences', []))}"

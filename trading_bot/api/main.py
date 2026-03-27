@@ -13,18 +13,22 @@ from trading_bot.core.alerts_store import load_alerts
 from trading_bot.core.backtester import backtest_symbol
 from trading_bot.core.confluence_engine import evaluate_symbol
 from trading_bot.core.data_fetcher import DataFetchError, FetchConfig, fetch_ohlc
-from trading_bot.core.instrument_universe import is_supported_symbol
+from trading_bot.core.instrument_universe import APPROVED_SYMBOLS, is_supported_symbol
 from trading_bot.core.journal import ensure_trade_logged, get_recent_journal, log_rejected_analysis
+from trading_bot.core.news_engine import JsonEconomicCalendarProvider, build_news_alerts, derive_news_bias, fetch_market_moving_events, get_pair_news_bias, split_symbol_currencies
 from trading_bot.core.performance_tracker import build_performance_snapshot
 
 
 DataSource = Literal["auto", "binance", "mock", "yfinance", "oanda", "alphavantage", "twelvedata", "stooq"]
 BASE_DIR = Path(__file__).resolve().parents[2]
 FRONTEND_DIR = BASE_DIR / "frontend"
+ECONOMIC_CALENDAR_PATH = BASE_DIR / "trading_bot" / "data" / "economic_calendar.json"
 _CACHE: dict[str, tuple[float, object]] = {}
 DATA_TTL_SECONDS = 2.0
 PERFORMANCE_TTL_SECONDS = 4.0
 JOURNAL_TTL_SECONDS = 3.0
+WATCHLIST_TTL_SECONDS = 20.0
+NEWS_TTL_SECONDS = 60.0
 
 
 app = FastAPI(
@@ -114,6 +118,115 @@ def performance() -> dict:
     if cached is not None:
         return cached
     payload = build_performance_snapshot()
+    _cache_set(cache_key, payload)
+    return payload
+
+
+@app.get("/watchlist")
+def watchlist(source: DataSource = Query(default="auto")) -> dict:
+    cache_key = f"watchlist|{source}"
+    cached = _cache_get(cache_key, WATCHLIST_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    items: list[dict] = []
+    for symbol in APPROVED_SYMBOLS:
+        item_source = _default_source_for_symbol(symbol, source)
+        try:
+            daily_data = fetch_ohlc(FetchConfig(symbol=symbol, interval="1d", limit=220, source=item_source))
+            h1_data = fetch_ohlc(FetchConfig(symbol=symbol, interval="1h", limit=320, source=item_source))
+            m30_data = fetch_ohlc(FetchConfig(symbol=symbol, interval="30m", limit=240, source=item_source))
+            setup = evaluate_symbol(symbol=symbol, daily_data=daily_data, h1_data=h1_data, m30_data=m30_data)
+            items.append(
+                {
+                    "symbol": symbol,
+                    "source": item_source,
+                    "status": setup.get("status", "ERROR"),
+                    "bias": setup.get("bias") or setup.get("final_bias") or "NEUTRAL",
+                    "daily_bias": str(setup.get("daily_bias", "UNKNOWN")).upper(),
+                    "h1_bias": str(setup.get("h1_bias", "UNKNOWN")).upper(),
+                    "confidence": setup.get("confidence", "LOW"),
+                    "confidence_score": setup.get("confidence_score", 0),
+                    "entry": setup.get("entry"),
+                    "latest_price": round(float(h1_data.iloc[-1]["close"]), 4),
+                    "message": setup.get("message", ""),
+                }
+            )
+        except Exception as exc:
+            items.append(
+                {
+                    "symbol": symbol,
+                    "source": item_source,
+                    "status": "ERROR",
+                    "bias": "NEUTRAL",
+                    "daily_bias": "UNKNOWN",
+                    "h1_bias": "UNKNOWN",
+                    "confidence": "LOW",
+                    "confidence_score": 0,
+                    "entry": None,
+                    "latest_price": None,
+                    "message": str(exc),
+                }
+            )
+
+    payload = {"symbols": items, "timestamp": datetime.now(UTC).isoformat()}
+    _cache_set(cache_key, payload)
+    return payload
+
+
+@app.get("/news")
+def news(symbol: str = Query(default="EURUSD")) -> dict:
+    symbol = symbol.upper()
+    if not is_supported_symbol(symbol):
+        return {"configured": False, "events": [], "message": "Unsupported symbol."}
+
+    cache_key = f"news|{symbol}"
+    cached = _cache_get(cache_key, NEWS_TTL_SECONDS)
+    if cached is not None:
+        return cached
+
+    if not ECONOMIC_CALENDAR_PATH.exists():
+        payload = {
+            "configured": False,
+            "events": [],
+            "message": "No economic calendar configured. Add trading_bot/data/economic_calendar.json to enable pair-specific news.",
+        }
+        _cache_set(cache_key, payload)
+        return payload
+
+    provider = JsonEconomicCalendarProvider(ECONOMIC_CALENDAR_PATH)
+    currencies = list(split_symbol_currencies(symbol))
+    events = fetch_market_moving_events(provider=provider, currencies=currencies)
+    bias_by_currency = derive_news_bias(currencies=currencies, events=events)
+    pair_bias = get_pair_news_bias(symbol, bias_by_currency)
+    upcoming, released, sudden = build_news_alerts(symbol=symbol, events=events)
+
+    payload = {
+        "configured": True,
+        "symbol": symbol,
+        "pair_news_bias": pair_bias.upper(),
+        "currencies": currencies,
+        "events": [
+            {
+                "event_name": event.event_name,
+                "currency": event.currency,
+                "impact": event.impact,
+                "time": event.time.isoformat(),
+                "forecast": event.forecast,
+                "previous": event.previous,
+                "actual": event.actual,
+                "market_moving": event.market_moving,
+                "is_scheduled": event.is_scheduled,
+            }
+            for event in events[:12]
+        ],
+        "alerts": {
+            "upcoming": upcoming,
+            "released": released,
+            "sudden": sudden,
+        },
+        "message": "Pair-specific news loaded." if events else "No relevant market-moving news in range.",
+    }
     _cache_set(cache_key, payload)
     return payload
 
@@ -297,3 +410,11 @@ def _normalize_execution_interval(interval: str) -> str:
     if interval == "15m":
         return "1h"
     return interval
+
+
+def _default_source_for_symbol(symbol: str, requested_source: str) -> str:
+    if requested_source != "auto":
+        return requested_source
+    if symbol.endswith("USDT"):
+        return "binance"
+    return "yfinance"

@@ -116,10 +116,11 @@ button {
 
 .layout {
     display: grid;
-    grid-template-columns: minmax(0, 1.7fr) minmax(360px, 0.95fr);
+    grid-template-columns: minmax(250px, 0.62fr) minmax(0, 1.45fr) minmax(360px, 0.95fr);
     gap: 18px;
 }
 
+.watchlist-column,
 .left-column,
 .right-column {
     display: grid;
@@ -208,6 +209,66 @@ button {
 .compact-list {
     max-height: 310px;
     overflow: auto;
+}
+
+.watchlist-item {
+    display: grid;
+    gap: 8px;
+    cursor: pointer;
+    transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.watchlist-item:hover {
+    transform: translateY(-1px);
+    border-color: rgba(93, 173, 226, 0.32);
+    background: rgba(255, 255, 255, 0.055);
+}
+
+.watchlist-item.active {
+    border-color: rgba(93, 173, 226, 0.42);
+    box-shadow: inset 0 0 0 1px rgba(93, 173, 226, 0.2);
+}
+
+.watchlist-head,
+.watchlist-meta {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    align-items: center;
+}
+
+.watchlist-symbol {
+    font-weight: 800;
+    font-size: 15px;
+    letter-spacing: 0.04em;
+}
+
+.watchlist-price {
+    color: var(--muted);
+    font-size: 13px;
+}
+
+.watchlist-sub {
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.watchlist-status {
+    font-size: 11px;
+    font-weight: 700;
+    text-transform: uppercase;
+}
+
+.watchlist-status.valid_trade {
+    color: var(--green);
+}
+
+.watchlist-status.no_trade {
+    color: var(--yellow);
+}
+
+.watchlist-status.error {
+    color: var(--red);
 }
 
 .card {
