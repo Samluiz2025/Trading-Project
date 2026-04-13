@@ -1,177 +1,138 @@
 # Trading Intelligence Platform
 
-A rule-based trading platform for scanning, validating, journaling, and reviewing swing setups across a focused watchlist.
+A rule-based trading platform for scanning, validating, journaling, reviewing, and backtesting forex and gold setups.
 
-This project is built around a strict Smart Money Concepts workflow:
+The live system is built around a shared execution framework:
 
-- `Daily` for directional bias
-- `H1` for execution logic
-- optional `M30` for refinement only
-- no trade unless all required conditions are present
+- `Daily` bias
+- higher-timeframe location or liquidity
+- lower-timeframe confirmation
+- defined entry
+- logical stop loss
+- realistic take profit
+- minimum acceptable risk-reward
 
-The current live focus is intentionally narrow:
+## Live Setup Models
 
-- `ETHUSDT`
-- `GBPUSD`
-- `EURUSD`
-- `BTCUSDT`
-- `XAUUSD`
-- `NAS100`
-- `USDCHF`
-- `USDJPY`
+The current live scanner uses 3 setup families:
 
-The platform includes:
+1. `Sweep Reversal`
+2. `Trend Pullback Continuation`
+3. `HTF Zone Reaction`
+
+These models share the same execution standard:
+
+- no mid-range entries
+- confirmation required
+- logical invalidation
+- `1:3` preferred
+- `1:2` minimum
+
+## Main Features
 
 - FastAPI backend
 - TradingView-based dashboard
-- real-time scanner
+- live scanner
 - Telegram alerts
 - trade journal
-- performance snapshot
+- digital twin tracking
+- challenge mode
+- weekly outlook engine
 - lightweight backtesting
-- optional AI/news modules already present in the codebase
-
-## Strategy Model
-
-The live strategy path is centered on a strict `Daily/H1/M15 Liquidity Sweep` framework:
-
-1. `Daily bias` must be clearly bullish or bearish
-2. `H1` must show equal highs or equal lows liquidity
-3. `H1` must sweep that liquidity in the required direction
-4. `M15` must confirm with structure break after the sweep
-5. Entry must come from the post-confirmation pullback or retest
-6. Only `London` and `New York` sessions are allowed
-7. If anything critical is missing, the system returns:
-
-```json
-{
-  "status": "NO TRADE",
-  "missing": ["..."],
-  "message": "No valid setup available"
-}
-```
-
-The current execution model uses a fixed `1:4` risk-reward target.
 
 ## Project Structure
 
 ```text
 frontend/
   index.html
-  style.css
   script.js
+  style.css
 
 trading_bot/
   api/
     main.py
   core/
-    strategy_strict_liquidity.py
-    confluence_engine.py
-    market_monitor.py
     alert_system.py
-    journal.py
-    performance_tracker.py
     backtester.py
+    confluence_engine.py
     data_fetcher.py
-    news_engine.py
-    ai_engine.py
-  data/
-    alerts.json
-    trade_journal.json
-    ai_dataset.csv
-    ai_metrics.json
-    ai_predictions.csv
-    model.pkl
+    digital_twin.py
+    journal.py
+    market_monitor.py
+    monitor_state.py
+    strategy_htf_zone.py
+    strategy_pullback.py
+    strategy_registry.py
+    strategy_strict_liquidity.py
+    weekly_outlook_engine.py
+    weekly_outlook_job.py
+    weekly_outlook_report.py
+  utils/
+    reset_monday_start.py
+    run_weekly_outlook.py
 
 run_bot.py
-simulate_symbol.py
-requirements.txt
+start_api.ps1
+start_scanner.ps1
+reset_monday_start.ps1
 ```
 
-## Features
+## Scanner Behavior
 
-### Dashboard
+The live scanner currently focuses on:
 
-The dashboard is designed to always render a useful state instead of hanging on loading.
+- forex pairs
+- `XAUUSD`
 
-It shows:
+It evaluates all active setup families and selects the best valid result.
 
-- TradingView chart
-- watchlist sidebar for the approved pairs
-- bias panel
-- active setup
-- setup map
-- smart overlays
-- alerts feed
-- journal
-- performance snapshot
-- pair-specific news panel
+Telegram alert stages are now intentionally clearer:
 
-Current dashboard behavior:
+- `VALID SETUP`
+- `ENTRY ACTIVATED`
+- `TRADE CLOSED`
 
-- loads analysis when opened
-- refreshes when you change pair, source, or interval
-- supports manual refresh
-- does not continuously blink/reload by default
+The feed also supports:
 
-### Scanner
+- `WAIT FOR CONFIRMATION`
 
-The scanner loops through the approved market list and sends alerts only for valid setups.
+Very early zone-watch noise is suppressed from Telegram.
 
-It can:
+## Challenge Mode
 
-- scan your watchlist every few seconds
-- log valid trades
-- log rejected analyses
-- update open trades when TP or SL is hit
-- send alerts to console and Telegram
+Challenge mode is a stricter layer on top of the normal scanner.
 
-### Alerts
+It only allows:
 
-Alert delivery supports:
+- `A+` setups
+- `1:3` RR or better
+- maximum `3` trades
 
-- console output
-- dashboard feed
-- Telegram
+It also applies a final gate to reject trades that are:
 
-Typical setup alert payload:
+- too extended
+- too late in session
+- too stretched after impulse
 
-```json
-{
-  "pair": "GBPUSD",
-  "bias": "SELL",
-  "entry": 1.3356,
-  "sl": 1.3370,
-  "tp": 1.3300,
-  "confidence": "HIGH",
-  "strategies": ["Strict Liquidity Sweep"],
-  "confluences": [
-    "Daily Bias",
-    "H1 Liquidity",
-    "H1 Liquidity Sweep",
-    "M15 Confirmation",
-    "Pullback Entry",
-    "RR 1:3"
-  ],
-  "timestamp": "2026-03-27T00:00:00+00:00"
-}
-```
+Challenge alerts are clearly labeled:
 
-### Journal and Performance
+- `CHALLENGE VALID SETUP`
+- `CHALLENGE ENTRY ACTIVATED`
+- `CHALLENGE TRADE WIN/LOSS`
 
-The system stores trade and analysis history in JSON so you can review:
+## Weekly Outlook
 
-- valid trades
-- rejected trades
-- missing conditions
-- open/closed status
-- RR achieved
-- win rate
-- profit factor
+The project includes a weekly outlook engine that:
 
-### Backtesting
+- reviews the previous week
+- builds next-week directional bias
+- marks zones and liquidity
+- proposes swing and intraday plans
+- saves JSON and markdown reports
 
-The API includes a lightweight backtest route for replaying the current setup logic against historical candles.
+## Backtesting
+
+The API includes a lightweight backtest route for replaying the current rule set against historical candles.
 
 ## Requirements
 
@@ -181,7 +142,7 @@ Install dependencies:
 python -m pip install -r requirements.txt
 ```
 
-Current `requirements.txt`:
+Typical packages used:
 
 - `fastapi`
 - `uvicorn`
@@ -194,153 +155,102 @@ Current `requirements.txt`:
 
 ## Getting Started
 
-### 1. Run the API / dashboard
-
-From the project root:
+### 1. Run the API
 
 ```powershell
-python -m uvicorn trading_bot.api.main:app --reload
+powershell -ExecutionPolicy Bypass -File .\start_api.ps1
 ```
 
-Open:
+Then open:
 
 - [http://127.0.0.1:8000/](http://127.0.0.1:8000/)
 
-### 2. Run the scanner
+### 2. Run the normal scanner
 
-In a second terminal:
-
-```powershell
-python run_bot.py --mode multi --universe all --source auto --poll-seconds 5
-```
-
-Recommended setup:
-
-- Terminal 1: FastAPI/dashboard
-- Terminal 2: scanner
-
-## Telegram Alerts
-
-Set your Telegram credentials in the same terminal where you run the scanner:
+In another terminal:
 
 ```powershell
 $env:TELEGRAM_BOT_TOKEN="YOUR_TOKEN"
 $env:TELEGRAM_CHAT_ID="YOUR_CHAT_ID"
+Remove-Item Env:CHALLENGE_MODE -ErrorAction SilentlyContinue
+Remove-Item Env:CHALLENGE_NAME -ErrorAction SilentlyContinue
+Remove-Item Env:CHALLENGE_MAX_TRADES -ErrorAction SilentlyContinue
+Remove-Item Env:CHALLENGE_RISK -ErrorAction SilentlyContinue
+powershell -ExecutionPolicy Bypass -File .\start_scanner.ps1
+```
+
+### 3. Run challenge mode
+
+In a separate terminal:
+
+```powershell
+$env:TELEGRAM_BOT_TOKEN="YOUR_TOKEN"
+$env:TELEGRAM_CHAT_ID="YOUR_CHAT_ID"
+$env:CHALLENGE_MODE="true"
+$env:CHALLENGE_NAME="Weekly Challenge"
+$env:CHALLENGE_MAX_TRADES="3"
+$env:CHALLENGE_RISK="30"
+powershell -ExecutionPolicy Bypass -File .\start_scanner.ps1
+```
+
+### 4. Monday reset
+
+Before London if needed:
+
+```powershell
+Get-Process python | Stop-Process -Force
+powershell -ExecutionPolicy Bypass -File .\reset_monday_start.ps1
+```
+
+## CLI Modes
+
+Examples:
+
+Run multi-strategy scanner:
+
+```powershell
 python run_bot.py --mode multi --universe all --source auto --poll-seconds 5
 ```
 
-If Telegram is configured correctly, the scanner should send:
+Run weekly outlook:
 
-- a startup/online message
-- new setup alerts
-- trade close alerts
+```powershell
+python run_bot.py --mode weekly-outlook --source auto --timezone Europe/Vienna
+```
+
+Run validation snapshot:
+
+```powershell
+python run_bot.py --mode validation
+```
+
+Run calibration:
+
+```powershell
+python run_bot.py --mode calibrate
+```
 
 ## API Endpoints
 
-### `GET /`
+Main routes include:
 
-Serves the frontend dashboard.
-
-### `GET /data`
-
-Returns the active state for one symbol.
-
-Example:
-
-```text
-/data?symbol=GBPUSD&interval=1h&source=yfinance
-```
-
-### `GET /status`
-
-Simple health endpoint.
-
-### `GET /journal`
-
-Returns recent journal entries.
-
-### `GET /performance`
-
-Returns performance snapshot data.
-
-### `GET /watchlist`
-
-Returns current analysis summary for the approved 8-symbol watchlist.
-
-### `GET /news`
-
-Returns pair-specific market-moving news context.
-
-Note:
-
-- this route expects a local calendar file at `trading_bot/data/economic_calendar.json`
-- if that file does not exist, the API returns a clean “not configured” message instead of failing
-
-### `GET /backtest`
-
-Runs a lightweight symbol backtest using the current strategy flow.
-
-Example:
-
-```text
-/backtest?symbol=GBPUSD&source=yfinance
-```
-
-## Data Sources
-
-The backend supports multiple sources, depending on asset class and local setup:
-
-- `auto`
-- `binance`
-- `yfinance`
-- `oanda`
-- `alphavantage`
-- `twelvedata`
-- `stooq`
-- `mock`
-
-Practical default usage:
-
-- `binance` for `BTCUSDT`, `ETHUSDT`
-- `yfinance` for forex, gold, and indices
+- `GET /`
+- `GET /data`
+- `GET /status`
+- `GET /journal`
+- `GET /performance`
+- `GET /watchlist`
+- `GET /news`
+- `GET /backtest`
+- `GET /weekly-outlook/latest`
+- `GET /weekly-outlook/run`
 
 ## Notes
 
-- The live platform is intentionally strict. If required confluences are missing, it should return `NO TRADE`.
-- The system is designed to analyze only the current approved watchlist, not every market.
-- The dashboard and scanner are separate processes.
-- If you close VS Code while using the integrated terminal, your running processes may stop. For longer runs, use external PowerShell or Windows Terminal windows.
-
-## Example Commands
-
-Run dashboard:
-
-```powershell
-python -m uvicorn trading_bot.api.main:app --reload
-```
-
-Run scanner:
-
-```powershell
-python run_bot.py --mode multi --universe all --source auto --poll-seconds 5
-```
-
-Run a quick symbol simulation:
-
-```powershell
-python simulate_symbol.py --symbol GBPUSD --mode test
-```
-
-## Roadmap Ideas
-
-Planned/high-value next improvements:
-
-- setup checklist panel showing satisfied vs missing conditions
-- richer calendar-style journal filters
-- smarter per-symbol source defaults inside the UI
-- tighter setup staging for Telegram
-- improved pair-specific news and macro context
-- deeper backtest reporting by setup family
+- The scanner and dashboard are separate processes.
+- Challenge mode is intentionally stricter than normal mode.
+- Local runtime state is stored under `trading_bot/data/`.
+- This repo now ignores generated runtime artifacts via `.gitignore`.
 
 ## Disclaimer
 
