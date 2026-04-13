@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from io import StringIO
 from dataclasses import dataclass
 from typing import Literal
@@ -29,6 +30,32 @@ class FetchConfig:
 
 class DataFetchError(Exception):
     """Raised when OHLC data cannot be retrieved from the requested source."""
+
+
+def _load_json_response(response: requests.Response) -> dict | list:
+    """
+    Parse provider JSON safely, tolerating UTF-8 BOM-prefixed payloads.
+
+    Some providers occasionally respond with JSON content that includes a BOM,
+    which breaks `response.json()` with a decode error.
+    """
+
+    try:
+        return response.json()
+    except ValueError:
+        try:
+            return json.loads(response.content.decode("utf-8-sig"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            raise DataFetchError("Provider returned invalid JSON payload.") from exc
+
+
+def _decode_text_response(response: requests.Response) -> str:
+    """Decode provider text safely, tolerating UTF-8 BOM-prefixed payloads."""
+
+    try:
+        return response.content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return response.text
 
 
 def fetch_ohlc(config: FetchConfig | None = None) -> pd.DataFrame:
@@ -98,7 +125,7 @@ def _fetch_binance_ohlc(config: FetchConfig) -> pd.DataFrame:
     )
     response.raise_for_status()
 
-    raw_rows = response.json()
+    raw_rows = _load_json_response(response)
     if not isinstance(raw_rows, list) or not raw_rows:
         raise DataFetchError("Binance returned an empty or invalid response.")
 
@@ -126,9 +153,16 @@ def _fetch_yfinance_ohlc(config: FetchConfig) -> pd.DataFrame:
 
     ticker = _normalize_yfinance_symbol(config.symbol)
     fetch_interval, resample_interval = _map_yfinance_interval(config.interval)
-    history = yf.Ticker(ticker).history(period="max", interval=fetch_interval, auto_adjust=False)
+    history = _fetch_yfinance_history_with_retry(
+        ticker=ticker,
+        fetch_interval=fetch_interval,
+        config=config,
+        yf_module=yf,
+    )
     if history.empty:
-        raise DataFetchError(f"Yahoo Finance returned no data for symbol '{ticker}'.")
+        raise DataFetchError(
+            f"Yahoo Finance returned no data for symbol '{ticker}' using interval '{fetch_interval}'."
+        )
 
     history = history.tail(config.limit).reset_index()
     time_column = "Datetime" if "Datetime" in history.columns else "Date"
@@ -151,6 +185,88 @@ def _fetch_yfinance_ohlc(config: FetchConfig) -> pd.DataFrame:
 
     dataframe = dataframe.tail(config.limit).reset_index(drop=True)
     return dataframe
+
+
+def _fetch_yfinance_history_with_retry(*, ticker: str, fetch_interval: str, config: FetchConfig, yf_module) -> pd.DataFrame:
+    primary_period = _yfinance_period_for_config(config)
+    fallback_periods = _yfinance_fallback_periods(config.interval)
+    last_error: Exception | None = None
+
+    for period in [primary_period, *fallback_periods]:
+        try:
+            history = yf_module.Ticker(ticker).history(period=period, interval=fetch_interval, auto_adjust=False)
+            if not history.empty:
+                return history
+        except Exception as exc:
+            last_error = exc
+            safe_period = _yfinance_limit_retry_period(str(exc), config.interval)
+            if safe_period is not None and safe_period != period:
+                try:
+                    history = yf_module.Ticker(ticker).history(period=safe_period, interval=fetch_interval, auto_adjust=False)
+                    if not history.empty:
+                        return history
+                except Exception as retry_exc:
+                    last_error = retry_exc
+            continue
+
+    if last_error is not None:
+        raise DataFetchError(str(last_error)) from last_error
+    return pd.DataFrame()
+
+
+def _yfinance_period_for_config(config: FetchConfig) -> str:
+    interval = str(config.interval)
+    limit = max(int(config.limit or 0), 1)
+
+    if interval == "15m":
+        required_days = max(int((limit / 96) * 2), 10)
+        return f"{min(required_days, 30)}d"
+    if interval == "30m":
+        required_days = max(int((limit / 48) * 2), 15)
+        return f"{min(required_days, 30)}d"
+    if interval in {"1h", "4h"}:
+        divisor = 24 if interval == "1h" else 6
+        required_days = max(int((limit / divisor) * 2), 45)
+        return f"{min(required_days, 365)}d"
+    if interval == "1d":
+        required_days = max(limit * 2, 180)
+        return f"{min(required_days, 1825)}d"
+    if interval == "1w":
+        required_days = max(limit * 14, 365)
+        return f"{min(required_days, 3650)}d"
+    return "365d"
+
+
+def _yfinance_fallback_periods(interval: str) -> list[str]:
+    normalized = str(interval)
+    if normalized in {"15m", "30m"}:
+        return ["21d", "14d", "7d"]
+    if normalized in {"1h", "4h"}:
+        return ["270d", "180d", "90d"]
+    if normalized == "1d":
+        return ["730d", "365d"]
+    if normalized == "1w":
+        return ["1825d", "730d"]
+    return ["180d"]
+
+
+def _yfinance_limit_retry_period(error_text: str, interval: str) -> str | None:
+    """
+    Retry with a comfortably smaller period when Yahoo rejects a request at its
+    timeframe boundary.
+
+    Yahoo's intraday limits are sensitive to timezone and DST offsets, so
+    staying well inside the published range is more reliable than sitting near
+    the edge.
+    """
+
+    normalized_error = str(error_text).lower()
+    normalized_interval = str(interval)
+    if "within the last 60 days" in normalized_error and normalized_interval in {"15m", "30m"}:
+        return "21d"
+    if "within the last 730 days" in normalized_error and normalized_interval in {"1h", "4h"}:
+        return "365d"
+    return None
 
 
 def _fetch_oanda_ohlc(config: FetchConfig) -> pd.DataFrame:
@@ -185,7 +301,7 @@ def _fetch_oanda_ohlc(config: FetchConfig) -> pd.DataFrame:
     )
     response.raise_for_status()
 
-    payload = response.json()
+    payload = _load_json_response(response)
     candles = payload.get("candles", [])
     if not candles:
         raise DataFetchError(f"OANDA returned no candles for instrument '{instrument}'.")
@@ -244,7 +360,7 @@ def _fetch_twelvedata_ohlc(config: FetchConfig) -> pd.DataFrame:
         timeout=config.timeout_seconds,
     )
     response.raise_for_status()
-    payload = response.json()
+    payload = _load_json_response(response)
     if payload.get("status") == "error":
         raise DataFetchError(payload.get("message", f"Twelve Data failed for symbol '{symbol}'."))
 
@@ -284,7 +400,7 @@ def _fetch_stooq_ohlc(config: FetchConfig) -> pd.DataFrame:
     )
     response.raise_for_status()
 
-    dataframe = pd.read_csv(StringIO(response.text))
+    dataframe = pd.read_csv(StringIO(_decode_text_response(response)))
     if dataframe.empty or "Date" not in dataframe.columns:
         raise DataFetchError(f"Stooq returned no data for symbol '{symbol}'.")
 
@@ -575,7 +691,7 @@ def _fetch_alphavantage_forex(config: FetchConfig, api_key: str) -> pd.DataFrame
         timeout=config.timeout_seconds,
     )
     response.raise_for_status()
-    payload = response.json()
+    payload = _load_json_response(response)
     series_key = _find_alphavantage_series_key(payload)
     if series_key is None:
         raise DataFetchError(payload.get("Note") or payload.get("Information") or "Alpha Vantage forex request failed.")
@@ -603,7 +719,7 @@ def _fetch_alphavantage_crypto(config: FetchConfig, api_key: str) -> pd.DataFram
         timeout=config.timeout_seconds,
     )
     response.raise_for_status()
-    payload = response.json()
+    payload = _load_json_response(response)
     series_key = _find_alphavantage_series_key(payload)
     if series_key is None:
         raise DataFetchError(payload.get("Note") or payload.get("Information") or "Alpha Vantage crypto request failed.")
@@ -629,7 +745,7 @@ def _fetch_alphavantage_symbol_time_series(config: FetchConfig, api_key: str) ->
         timeout=config.timeout_seconds,
     )
     response.raise_for_status()
-    payload = response.json()
+    payload = _load_json_response(response)
     series_key = _find_alphavantage_series_key(payload)
     if series_key is None:
         raise DataFetchError(payload.get("Note") or payload.get("Information") or "Alpha Vantage symbol request failed.")

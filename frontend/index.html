@@ -3,18 +3,18 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>Trading Intelligence Platform</title>
+    <title>FlowScope Trading Desk</title>
     <link rel="stylesheet" href="/frontend/style.css">
 </head>
 <body>
     <main class="page">
         <header class="hero">
             <div>
-                <p class="eyebrow">Trading Intelligence Platform</p>
-                <h1>Strict Multi-Strategy Dashboard</h1>
+                <p class="eyebrow">FlowScope Trading Desk</p>
+                <h1>Clean market flow. Clear setups. Faster decisions.</h1>
                 <p class="subtitle">
-                    Daily bias, H1 execution, optional M30 refinement, strict filtering,
-                    trade journal, alerts, and performance in one live workspace.
+                    A focused swing workspace built around Daily bias, H1 execution, optional M15 refinement,
+                    live watchlist scanning, setup quality control, journaling, and alerts.
                 </p>
             </div>
             <div class="hero-controls">
@@ -43,13 +43,25 @@
                     <span>Execution View</span>
                     <select id="interval-select">
                         <option value="1h" selected>H1</option>
-                        <option value="30m">M30 refinement</option>
+                        <option value="15m">M15 refinement</option>
                     </select>
                 </label>
                 <button id="refresh-button" type="button">Refresh</button>
                 <datalist id="tv-symbol-list">
+                    <option value="FX:EURGBP"></option>
+                    <option value="FX:EURNZD"></option>
+                    <option value="FX:GBPAUD"></option>
+                    <option value="FX:AUDCAD"></option>
+                    <option value="FX:AUDUSD"></option>
+                    <option value="FX:AUDJPY"></option>
+                    <option value="FX:CADJPY"></option>
+                    <option value="FX:CHFJPY"></option>
+                    <option value="FX:GBPCHF"></option>
                     <option value="FX:GBPUSD"></option>
+                    <option value="FX:GBPJPY"></option>
                     <option value="FX:EURUSD"></option>
+                    <option value="FX:NZDUSD"></option>
+                    <option value="FX:NZDJPY"></option>
                     <option value="FX:USDCHF"></option>
                     <option value="FX:USDJPY"></option>
                     <option value="OANDA:XAUUSD"></option>
@@ -58,8 +70,20 @@
                     <option value="BINANCE:ETHUSDT"></option>
                 </datalist>
                 <datalist id="symbol-list">
+                    <option value="EURGBP"></option>
+                    <option value="EURNZD"></option>
+                    <option value="GBPAUD"></option>
+                    <option value="AUDCAD"></option>
+                    <option value="AUDUSD"></option>
+                    <option value="AUDJPY"></option>
+                    <option value="CADJPY"></option>
+                    <option value="CHFJPY"></option>
+                    <option value="GBPCHF"></option>
                     <option value="GBPUSD"></option>
+                    <option value="GBPJPY"></option>
                     <option value="EURUSD"></option>
+                    <option value="NZDUSD"></option>
+                    <option value="NZDJPY"></option>
                     <option value="USDCHF"></option>
                     <option value="USDJPY"></option>
                     <option value="XAUUSD"></option>
@@ -76,7 +100,7 @@
                     <div class="panel-head">
                         <div>
                             <h2>Watchlist</h2>
-                            <p>Approved pairs only. Click any pair to load analysis.</p>
+                            <p>Focused markets only. Click any pair to load the full desk view.</p>
                         </div>
                     </div>
                     <div id="watchlist-panel" class="list-panel compact-list"></div>
@@ -88,7 +112,7 @@
                     <div class="panel-head">
                         <div>
                             <h2>Chart</h2>
-                            <p id="chart-caption">TradingView widget</p>
+                            <p id="chart-caption">Live market view</p>
                         </div>
                         <div class="mini-badges">
                             <span class="mini-badge">Dark</span>
@@ -104,7 +128,7 @@
                     <div class="panel-head">
                         <div>
                             <h2>Smart Overlays</h2>
-                            <p>Only the latest active HTF zones, FVG, order block, liquidity, and trade levels.</p>
+                            <p>Latest structure, trade levels, and only the context that matters right now.</p>
                         </div>
                     </div>
                     <div class="split-grid">
@@ -119,7 +143,7 @@
                     <div class="panel-head">
                         <div>
                             <h2>Bias Panel</h2>
-                            <p>HTF + news + final decision</p>
+                            <p>Directional read across timeframe, flow, and decision state.</p>
                         </div>
                     </div>
                     <div id="final-bias" class="final-bias neutral">NEUTRAL</div>
@@ -147,7 +171,7 @@
                     <div class="panel-head">
                         <div>
                             <h2>Active Setup</h2>
-                            <p>Best-ranked aligned execution candidate</p>
+                            <p>The current chart's highest-quality setup, if one exists.</p>
                         </div>
                     </div>
                     <div id="setup-panel" class="list-panel"></div>
@@ -156,8 +180,58 @@
                 <article class="panel">
                     <div class="panel-head">
                         <div>
+                            <h2>Setup Checklist</h2>
+                            <p>See what is confirmed, what is weak, and why a setup is valid or blocked.</p>
+                        </div>
+                    </div>
+                    <div id="checklist-panel" class="list-panel compact-list"></div>
+                </article>
+
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Live Setups</h2>
+                            <p>Other markets with valid setups, key levels, and structural context.</p>
+                        </div>
+                    </div>
+                    <div id="live-setups-panel" class="list-panel compact-list"></div>
+                </article>
+
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Cluster Alignment</h2>
+                            <p>See whether crypto, indices, yen crosses, and linked FX groups are flowing together.</p>
+                        </div>
+                    </div>
+                    <div id="cluster-panel" class="list-panel compact-list"></div>
+                </article>
+
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Top Opportunities</h2>
+                            <p>The best markets to focus on right now, even if they are still building.</p>
+                        </div>
+                    </div>
+                    <div id="opportunities-panel" class="list-panel compact-list"></div>
+                </article>
+
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Broader Scan</h2>
+                            <p>Trending candidates beyond the core watchlist, ranked by how close they are.</p>
+                        </div>
+                    </div>
+                    <div id="scan-report-panel" class="list-panel compact-list"></div>
+                </article>
+
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
                             <h2>Setup Map</h2>
-                            <p>Visual entry, stop, target, and reward snapshot</p>
+                            <p>Entry, stop, target, and reward laid out at a glance.</p>
                         </div>
                     </div>
                     <div id="setup-map-panel" class="setup-map-panel"></div>
@@ -167,7 +241,7 @@
                     <div class="panel-head">
                         <div>
                             <h2>Alerts Feed</h2>
-                            <p>Setup, bias, and news alerts</p>
+                            <p>Scanner output, bias shifts, and trade lifecycle updates.</p>
                         </div>
                     </div>
                     <div id="alerts-panel" class="list-panel compact-list"></div>
@@ -177,7 +251,53 @@
                     <div class="panel-head">
                         <div>
                             <h2>Trade Journal</h2>
-                            <p>Recent logged trades and outcomes</p>
+                            <p>Your recent decisions, outcomes, and context grouped by date.</p>
+                        </div>
+                        <div class="hero-controls">
+                            <label class="field">
+                                <span>Pair</span>
+                                <select id="journal-pair-filter">
+                                    <option value="">All</option>
+                                    <option value="EURUSD">EURUSD</option>
+                                    <option value="GBPUSD">GBPUSD</option>
+                                    <option value="AUDCAD">AUDCAD</option>
+                                    <option value="AUDUSD">AUDUSD</option>
+                                    <option value="NZDUSD">NZDUSD</option>
+                                    <option value="USDCHF">USDCHF</option>
+                                    <option value="USDJPY">USDJPY</option>
+                                    <option value="AUDJPY">AUDJPY</option>
+                                    <option value="CHFJPY">CHFJPY</option>
+                                    <option value="GBPJPY">GBPJPY</option>
+                                    <option value="XAUUSD">XAUUSD</option>
+                                    <option value="NAS100">NAS100</option>
+                                    <option value="BTCUSDT">BTCUSDT</option>
+                                    <option value="ETHUSDT">ETHUSDT</option>
+                                </select>
+                            </label>
+                            <label class="field">
+                                <span>Result</span>
+                                <select id="journal-result-filter">
+                                    <option value="">All</option>
+                                    <option value="WIN">WIN</option>
+                                    <option value="LOSS">LOSS</option>
+                                    <option value="OPEN">OPEN</option>
+                                    <option value="NO_TRADE">NO TRADE</option>
+                                </select>
+                            </label>
+                            <label class="field">
+                                <span>Quality</span>
+                                <select id="journal-quality-filter">
+                                    <option value="">All</option>
+                                    <option value="A">A</option>
+                                    <option value="B">B</option>
+                                    <option value="C">C</option>
+                                    <option value="REJECTED">REJECTED</option>
+                                </select>
+                            </label>
+                            <label class="field">
+                                <span>Month</span>
+                                <input id="journal-month-filter" type="month">
+                            </label>
                         </div>
                     </div>
                     <div id="journal-panel" class="list-panel compact-list"></div>
@@ -187,7 +307,7 @@
                     <div class="panel-head">
                         <div>
                             <h2>News Feed</h2>
-                            <p>Pair-specific calendar and market-moving context</p>
+                            <p>Relevant scheduled and market-moving events for the selected pair.</p>
                         </div>
                     </div>
                     <div id="news-panel" class="list-panel compact-list"></div>
@@ -197,10 +317,30 @@
                     <div class="panel-head">
                         <div>
                             <h2>Performance Stats</h2>
-                            <p>Live win rate, profit factor, and top strategies</p>
+                            <p>Current results snapshot across the live system.</p>
                         </div>
                     </div>
                     <div id="performance-panel" class="list-panel compact-list"></div>
+                </article>
+
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Digital Twin</h2>
+                            <p>Virtual account, open twin trades, strategy comparison, and news-aware self-evaluation.</p>
+                        </div>
+                    </div>
+                    <div id="digital-twin-panel" class="list-panel compact-list"></div>
+                </article>
+
+                <article class="panel">
+                    <div class="panel-head">
+                        <div>
+                            <h2>Fractal Context</h2>
+                            <p>Historical analogs, current range-box type, and likely next-path bias.</p>
+                        </div>
+                    </div>
+                    <div id="fractal-panel" class="list-panel compact-list"></div>
                 </article>
             </aside>
         </section>

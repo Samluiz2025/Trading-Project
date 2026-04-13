@@ -5,83 +5,144 @@ from datetime import UTC, datetime
 import pandas as pd
 
 from trading_bot.core.filter_engine import filter_trade
-from trading_bot.core.strategy_smc import SmcConfig, detect_daily_bias, generate_trade_setup as generate_smc_setup
+from trading_bot.core.strategy_htf_zone import build_htf_zone_reaction_config, generate_htf_zone_reaction_setup
+from trading_bot.core.strategy_pullback import build_pullback_continuation_config, generate_pullback_continuation_setup
+from trading_bot.core.strategy_registry import HTF_ZONE_STRATEGY, PULLBACK_STRATEGY, PRIMARY_STRATEGY
+from trading_bot.core.strategy_strict_liquidity import build_strict_liquidity_config, generate_strict_liquidity_setup
 
 
-def evaluate_symbol(symbol: str, daily_data: pd.DataFrame, h1_data: pd.DataFrame, m30_data: pd.DataFrame | None = None) -> dict:
-    smc_result = generate_smc_setup(symbol=symbol, daily_data=daily_data, h1_data=h1_data, m30_data=m30_data, config=SmcConfig(symbol=symbol))
-    daily_bias = detect_daily_bias(daily_data)["bias"]
-    refinement = smc_result.get("details", {}).get("refinement", {})
-    refinement_used = bool(refinement.get("used"))
-    refinement_aligned = bool(refinement.get("aligned"))
-    confidence_label, confidence_score = _refinement_confidence(refinement_used, refinement_aligned)
+def evaluate_symbol(
+    symbol: str,
+    weekly_data: pd.DataFrame | None,
+    daily_data: pd.DataFrame,
+    h1_data: pd.DataFrame,
+    ltf_data: pd.DataFrame | None = None,
+    h4_data: pd.DataFrame | None = None,
+) -> dict:
+    strict_result = generate_strict_liquidity_setup(
+        symbol=symbol,
+        daily_data=daily_data,
+        h1_data=h1_data,
+        m15_data=ltf_data,
+        config=build_strict_liquidity_config(symbol),
+    )
+    pullback_result = generate_pullback_continuation_setup(
+        symbol=symbol,
+        daily_data=daily_data,
+        h1_data=h1_data,
+        m15_data=ltf_data,
+        config=build_pullback_continuation_config(symbol),
+    )
+    htf_zone_result = generate_htf_zone_reaction_setup(
+        symbol=symbol,
+        daily_data=daily_data,
+        h1_data=h1_data,
+        m15_data=ltf_data,
+        config=build_htf_zone_reaction_config(symbol),
+    )
+    strategy_results = {
+        "strict_liquidity": strict_result,
+        "pullback": pullback_result,
+        "htf_zone": htf_zone_result,
+    }
+    latest_price = round(float((ltf_data if ltf_data is not None else h1_data).iloc[-1]["close"]), 4)
+    selected = _select_best_result(strict_result, pullback_result, htf_zone_result)
 
-    if smc_result.get("status") != "VALID_TRADE":
-        no_trade = filter_trade(smc_result)
-        no_trade.update(
+    if selected.get("status") != "VALID_TRADE":
+        candidate = filter_trade(selected)
+        candidate.update(
             {
-                "pair": symbol.upper(),
-                "daily_bias": daily_bias,
-                "h1_bias": smc_result.get("details", {}).get("h1_structure", {}).get("trend"),
-                "latest_price": round(float(h1_data.iloc[-1]["close"]), 4),
-                "strategies_checked": ["SMC Continuation", "M30 Refinement"],
-                "strategy_results": {
-                    "smc": smc_result,
-                    "refinement": refinement,
-                },
-                "confidence": confidence_label,
-                "confidence_score": 0,
+                "status": selected.get("status", candidate.get("status")),
+                "message": selected.get("message", candidate.get("message")),
+                "pair": str(symbol).upper(),
+                "daily_bias": selected.get("daily_bias"),
+                "h1_bias": selected.get("h1_bias"),
+                "latest_price": latest_price,
+                "strategies_checked": [PRIMARY_STRATEGY, PULLBACK_STRATEGY, HTF_ZONE_STRATEGY],
+                "strategy_results": strategy_results,
+                "confidence": selected.get("confidence", candidate.get("confidence", "LOW")),
+                "confidence_score": selected.get("confidence_score", candidate.get("confidence_score", 0)),
+                "risk_reward_ratio": selected.get("risk_reward_ratio"),
+                "lifecycle": selected.get("lifecycle", candidate.get("lifecycle", "no_trade")),
+                "stalker": selected.get("stalker"),
                 "timestamp": datetime.now(UTC).isoformat(),
+                "session": selected.get("session"),
+                "setup_grade": selected.get("setup_grade"),
+                "setup_type": selected.get("setup_type"),
+                "invalidation": selected.get("invalidation"),
+                "reason": selected.get("reason") or selected.get("message"),
+                "analysis_context": selected.get("analysis_context", {}),
+                "details": selected.get("details", {}),
+                "confluences": selected.get("confluences", []),
+                "strategies": selected.get("strategies", [selected.get("strategy") or PRIMARY_STRATEGY]),
+                "strategy": selected.get("strategy", PRIMARY_STRATEGY),
+                "bias": selected.get("bias"),
+                "entry": selected.get("entry"),
+                "sl": selected.get("sl"),
+                "tp": selected.get("tp"),
             }
         )
-        return no_trade
+        return candidate
 
-    confluences = list(smc_result.get("confluences", []))
-    strategies = ["SMC Continuation"]
-    if refinement_used:
-        strategies.append("M30 Refinement")
-        if refinement_aligned:
-            confluences.append("M30 Refinement Aligned")
-        else:
-            confluences.append("M30 Refinement Observed")
-
-    payload = {
+    return {
         "status": "VALID_TRADE",
-        "message": "Valid swing setup available",
-        "pair": symbol.upper(),
-        "bias": smc_result["bias"],
-        "entry": smc_result["entry"],
-        "sl": smc_result["sl"],
-        "tp": smc_result["tp"],
-        "confidence": confidence_label,
-        "confidence_score": confidence_score,
-        "strategies": strategies,
-        "confluences": _unique_ordered(confluences),
+        "message": "Valid trade setup available",
+        "pair": str(symbol).upper(),
+        "bias": selected["bias"],
+        "entry": selected["entry"],
+        "sl": selected["sl"],
+        "tp": selected["tp"],
+        "risk_reward_ratio": selected.get("risk_reward_ratio"),
+        "confidence": selected.get("confidence"),
+        "confidence_score": selected.get("confidence_score"),
+        "strategies": selected.get("strategies", [selected.get("strategy") or PRIMARY_STRATEGY]),
+        "strategy": selected.get("strategy", PRIMARY_STRATEGY),
+        "confluences": selected.get("confluences", []),
         "missing": [],
-        "daily_bias": daily_bias,
-        "h1_bias": smc_result.get("details", {}).get("h1_structure", {}).get("trend"),
-        "latest_price": round(float(h1_data.iloc[-1]["close"]), 4),
-        "strategy_results": {
-            "smc": smc_result,
-            "refinement": refinement,
-        },
+        "lifecycle": selected.get("lifecycle", "entry_reached"),
+        "stalker": None,
+        "daily_bias": selected.get("daily_bias"),
+        "h1_bias": selected.get("h1_bias"),
+        "latest_price": latest_price,
+        "strategy_results": strategy_results,
+        "strategies_checked": [PRIMARY_STRATEGY, PULLBACK_STRATEGY, HTF_ZONE_STRATEGY],
         "timestamp": datetime.now(UTC).isoformat(),
+        "session": selected.get("session"),
+        "setup_grade": selected.get("setup_grade"),
+        "setup_type": selected.get("setup_type"),
+        "invalidation": selected.get("invalidation"),
+        "reason": selected.get("reason"),
+        "analysis_context": selected.get("analysis_context", {}),
+        "details": selected.get("details", {}),
     }
-    return payload
 
 
-def _refinement_confidence(refinement_used: bool, refinement_aligned: bool) -> tuple[str, int]:
-    if refinement_used and refinement_aligned:
-        return "HIGH", 82
-    return "LOW", 68
+def _select_best_result(*results: dict) -> dict:
+    ranked = sorted(results, key=_result_rank, reverse=True)
+    return ranked[0]
 
 
-def _unique_ordered(items: list[str]) -> list[str]:
-    seen = set()
-    ordered: list[str] = []
-    for item in items:
-        if item in seen:
-            continue
-        seen.add(item)
-        ordered.append(item)
-    return ordered
+def _result_rank(result: dict) -> tuple[int, float, float, float, int]:
+    status = str(result.get("status") or "NO TRADE").upper()
+    status_rank = {
+        "VALID_TRADE": 3,
+        "WAIT_CONFIRMATION": 2,
+        "NO TRADE": 1,
+    }.get(status, 0)
+    grade_rank = {
+        "A+": 4,
+        "A": 3,
+        "B": 2,
+        "C": 1,
+    }.get(str(result.get("setup_grade") or "").upper(), 0)
+    confidence_score = float(result.get("confidence_score") or 0.0)
+    risk_reward = float(result.get("risk_reward_ratio") or 0.0)
+    confluence_count = len(result.get("confluences") or [])
+    stalker_score = float((result.get("stalker") or {}).get("score") or 0.0)
+    return (
+        status_rank,
+        grade_rank,
+        confidence_score + stalker_score * 0.2,
+        risk_reward,
+        confluence_count,
+    )

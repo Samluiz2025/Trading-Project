@@ -27,7 +27,7 @@ body {
 }
 
 .page {
-    max-width: 1580px;
+    max-width: 1780px;
     margin: 0 auto;
     padding: 24px;
 }
@@ -58,7 +58,9 @@ body {
 
 .hero h1 {
     margin: 0 0 10px;
-    font-size: 35px;
+    font-size: 42px;
+    line-height: 1.08;
+    max-width: 900px;
 }
 
 .subtitle {
@@ -72,6 +74,10 @@ body {
     gap: 12px;
     flex-wrap: wrap;
     align-items: end;
+}
+
+.panel-head .hero-controls {
+    justify-content: flex-end;
 }
 
 .field {
@@ -116,7 +122,7 @@ button {
 
 .layout {
     display: grid;
-    grid-template-columns: minmax(250px, 0.62fr) minmax(0, 1.45fr) minmax(360px, 0.95fr);
+    grid-template-columns: minmax(250px, 0.58fr) minmax(0, 1.85fr) minmax(390px, 0.92fr);
     gap: 18px;
 }
 
@@ -163,7 +169,7 @@ button {
 }
 
 .tradingview-widget {
-    height: 610px;
+    height: 790px;
 }
 
 .overlay-strip {
@@ -211,11 +217,54 @@ button {
     overflow: auto;
 }
 
+#cluster-panel .card h3 {
+    letter-spacing: 0.03em;
+}
+
+.cluster-card {
+    cursor: pointer;
+    transition: transform 120ms ease, opacity 120ms ease;
+}
+
+.cluster-leader {
+    display: inline-flex;
+    align-items: center;
+    margin: 0 0 8px 2px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    border: 1px solid rgba(93, 173, 226, 0.22);
+    background: rgba(93, 173, 226, 0.1);
+    color: var(--blue);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+
+.cluster-card:hover {
+    transform: translateY(-1px);
+    opacity: 0.98;
+}
+
+.journal-day {
+    font-size: 12px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--blue);
+    padding: 6px 2px 0;
+}
+
 .watchlist-item {
     display: grid;
     gap: 8px;
     cursor: pointer;
     transition: transform 120ms ease, border-color 120ms ease, background 120ms ease;
+}
+
+.watchlist-group {
+    display: grid;
+    gap: 10px;
 }
 
 .watchlist-item:hover {
@@ -462,6 +511,6 @@ button {
     }
 
     .tradingview-widget {
-        height: 460px;
+        height: 560px;
     }
 }

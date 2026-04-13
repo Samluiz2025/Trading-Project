@@ -33,17 +33,15 @@ The platform includes:
 
 ## Strategy Model
 
-The live strategy path is centered on `SMC Continuation` inside a top-down framework:
+The live strategy path is centered on a strict `Daily/H1/M15 Liquidity Sweep` framework:
 
-1. `Daily bias` determines buy-only or sell-only context
-2. `H1` must align with Daily
-3. `H1` must confirm continuation with:
-   - BOS and/or valid MSS
-   - inducement
-   - valid order block
-   - valid FVG near the OB
-4. Optional `M30` is used only to refine the same setup
-5. If anything critical is missing, the system returns:
+1. `Daily bias` must be clearly bullish or bearish
+2. `H1` must show equal highs or equal lows liquidity
+3. `H1` must sweep that liquidity in the required direction
+4. `M15` must confirm with structure break after the sweep
+5. Entry must come from the post-confirmation pullback or retest
+6. Only `London` and `New York` sessions are allowed
+7. If anything critical is missing, the system returns:
 
 ```json
 {
@@ -67,7 +65,7 @@ trading_bot/
   api/
     main.py
   core/
-    strategy_smc.py
+    strategy_strict_liquidity.py
     confluence_engine.py
     market_monitor.py
     alert_system.py
@@ -146,15 +144,14 @@ Typical setup alert payload:
   "sl": 1.3370,
   "tp": 1.3300,
   "confidence": "HIGH",
-  "strategies": ["SMC Continuation", "M30 Refinement"],
+  "strategies": ["Strict Liquidity Sweep"],
   "confluences": [
     "Daily Bias",
-    "H1 Structure",
-    "BOS/MSS",
-    "Inducement Confirmed",
-    "Order Block",
-    "FVG",
-    "M30 Refinement Aligned"
+    "H1 Liquidity",
+    "H1 Liquidity Sweep",
+    "M15 Confirmation",
+    "Pullback Entry",
+    "RR 1:3"
   ],
   "timestamp": "2026-03-27T00:00:00+00:00"
 }

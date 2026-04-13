@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import json
+import os
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Protocol
+from xml.etree import ElementTree
+
+import requests
 
 
 BiasLabel = str
@@ -81,7 +85,7 @@ class JsonEconomicCalendarProvider:
         if not self.path.exists():
             return []
 
-        payload = json.loads(self.path.read_text(encoding="utf-8"))
+        payload = json.loads(self.path.read_text(encoding="utf-8-sig"))
         currency_filter = {currency.upper() for currency in currencies}
 
         events: list[EconomicEvent] = []
@@ -105,6 +109,83 @@ class JsonEconomicCalendarProvider:
             if not (start_time <= event.time <= end_time):
                 continue
             events.append(event)
+
+        events.sort(key=lambda event: event.time)
+        return events
+
+
+class TradingEconomicsCalendarProvider:
+    """
+    Live economic calendar provider backed by Trading Economics.
+
+    Credentials can be supplied as:
+    - TRADING_ECONOMICS_API_KEY
+    - or TRADING_ECONOMICS_CLIENT + TRADING_ECONOMICS_SECRET
+    """
+
+    def __init__(self, api_key: str | None = None, client: str | None = None, secret: str | None = None) -> None:
+        self.api_key = api_key or os.getenv("TRADING_ECONOMICS_API_KEY")
+        self.client = client or os.getenv("TRADING_ECONOMICS_CLIENT")
+        self.secret = secret or os.getenv("TRADING_ECONOMICS_SECRET")
+
+    def is_configured(self) -> bool:
+        return bool(self.api_key or (self.client and self.secret))
+
+    def fetch_events(
+        self,
+        currencies: list[str],
+        start_time: datetime,
+        end_time: datetime,
+    ) -> list[EconomicEvent]:
+        if not self.is_configured():
+            return []
+
+        auth_value = self.api_key if self.api_key else f"{self.client}:{self.secret}"
+        try:
+            response = requests.get(
+                "https://api.tradingeconomics.com/calendar",
+                params={"c": auth_value, "f": "json"},
+                timeout=12,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except requests.RequestException:
+            return []
+
+        currency_filter = {currency.upper() for currency in currencies}
+        events: list[EconomicEvent] = []
+        for item in payload:
+            raw_currency = str(item.get("Currency") or item.get("currency") or "").upper()
+            if raw_currency not in currency_filter:
+                continue
+
+            raw_date = item.get("Date") or item.get("date")
+            if not raw_date:
+                continue
+            try:
+                event_time = _parse_provider_datetime(str(raw_date))
+            except ValueError:
+                continue
+            if not (start_time <= event_time <= end_time):
+                continue
+
+            impact_value = str(item.get("Importance") or item.get("importance") or item.get("Impact") or "").lower()
+            impact = "high" if "3" in impact_value or "high" in impact_value else "medium" if "2" in impact_value or "medium" in impact_value else "low"
+            events.append(
+                EconomicEvent(
+                    event_name=str(item.get("Event") or item.get("event") or item.get("Category") or "Economic event"),
+                    currency=raw_currency,
+                    impact=impact,
+                    time=event_time,
+                    category=str(item.get("Category") or item.get("category") or "calendar"),
+                    is_scheduled=True,
+                    market_moving=impact in {"high", "medium"},
+                    impact_score=_default_impact_score(impact),
+                    forecast=_coerce_float(item.get("Forecast") or item.get("forecast")),
+                    previous=_coerce_float(item.get("Previous") or item.get("previous")),
+                    actual=_coerce_float(item.get("Actual") or item.get("actual")),
+                )
+            )
 
         events.sort(key=lambda event: event.time)
         return events
@@ -330,6 +411,132 @@ def build_news_alerts(
     return upcoming_alerts, released_alerts, sudden_alerts
 
 
+def rank_events_for_symbol(symbol: str, events: list[EconomicEvent]) -> list[dict]:
+    relevant_currencies = set(split_symbol_currencies(symbol))
+    ranked: list[dict] = []
+    for event in events:
+        relevance = event.impact_score
+        if event.currency in relevant_currencies:
+            relevance += 5
+        if event.market_moving:
+            relevance += 4
+        if not event.is_scheduled:
+            relevance += 3
+        ranked.append(
+            {
+                "event_name": event.event_name,
+                "currency": event.currency,
+                "impact": event.impact,
+                "time": event.time.isoformat(),
+                "forecast": event.forecast,
+                "previous": event.previous,
+                "actual": event.actual,
+                "market_moving": event.market_moving,
+                "is_scheduled": event.is_scheduled,
+                "impact_score": event.impact_score,
+                "relevance_score": relevance,
+            }
+        )
+    ranked.sort(key=lambda item: (-item["relevance_score"], item["time"]))
+    return ranked
+
+
+def get_news_lock(symbol: str, events: list[EconomicEvent], current_time: datetime | None = None, window_minutes: int = 30) -> dict:
+    active_time = current_time or datetime.now(UTC)
+    relevant_currencies = set(split_symbol_currencies(symbol))
+    locked_by: list[dict] = []
+    for event in events:
+        if event.currency not in relevant_currencies:
+            continue
+        if event.impact not in {"high", "medium"} and not event.market_moving:
+            continue
+        minutes_to_event = abs((event.time - active_time).total_seconds()) / 60
+        if minutes_to_event <= window_minutes:
+            locked_by.append(
+                {
+                    "event_name": event.event_name,
+                    "currency": event.currency,
+                    "time": event.time.isoformat(),
+                    "minutes_from_now": round(minutes_to_event, 1),
+                }
+            )
+    return {
+        "locked": bool(locked_by),
+        "window_minutes": window_minutes,
+        "events": locked_by,
+    }
+
+
+def load_symbol_news_context(
+    symbol: str,
+    *,
+    calendar_path: str | Path | None = None,
+    current_time: datetime | None = None,
+) -> dict:
+    live_provider = TradingEconomicsCalendarProvider()
+    default_path = Path(__file__).resolve().parents[1] / "data" / "economic_calendar.json"
+    active_path = Path(calendar_path) if calendar_path is not None else default_path
+    if live_provider.is_configured():
+        provider: EconomicCalendarProvider | None = live_provider
+    elif active_path.exists():
+        provider = JsonEconomicCalendarProvider(active_path)
+    else:
+        provider = None
+
+    if provider is None:
+        return {
+            "configured": False,
+            "events": [],
+            "ranked_events": [],
+            "pair_news_bias": "neutral",
+            "news_lock": {"locked": False, "events": [], "window_minutes": 30},
+            "headlines": fetch_live_headlines(symbol),
+            "provider": "headlines_only",
+        }
+
+    currencies = list(split_symbol_currencies(symbol))
+    events = fetch_market_moving_events(provider=provider, currencies=currencies, current_time=current_time)
+    bias_by_currency = derive_news_bias(currencies=currencies, events=events, current_time=current_time)
+    return {
+        "configured": True,
+        "events": events,
+        "ranked_events": rank_events_for_symbol(symbol, events),
+        "pair_news_bias": get_pair_news_bias(symbol, bias_by_currency),
+        "news_lock": get_news_lock(symbol, events, current_time=current_time),
+        "headlines": fetch_live_headlines(symbol),
+        "provider": "tradingeconomics" if isinstance(provider, TradingEconomicsCalendarProvider) else "local_json",
+    }
+
+
+def fetch_live_headlines(symbol: str, limit: int = 8) -> list[dict]:
+    query = _headline_query(symbol)
+    url = f"https://news.google.com/rss/search?q={query}"
+    try:
+        response = requests.get(url, timeout=8)
+        response.raise_for_status()
+    except requests.RequestException:
+        return []
+
+    try:
+        root = ElementTree.fromstring(response.text)
+    except ElementTree.ParseError:
+        return []
+
+    items: list[dict] = []
+    for item in root.findall(".//item")[:limit]:
+        items.append(
+            {
+                "title": _safe_xml_text(item.find("title")),
+                "link": _safe_xml_text(item.find("link")),
+                "published": _safe_xml_text(item.find("pubDate")),
+                "source": _safe_xml_text(item.find("source")),
+                "relevance_score": _headline_relevance(symbol, _safe_xml_text(item.find("title"))),
+            }
+        )
+    items.sort(key=lambda headline: -headline["relevance_score"])
+    return items
+
+
 def split_symbol_currencies(symbol: str) -> tuple[str, str]:
     """Infer base and quote currencies from common FX and crypto symbol formats."""
 
@@ -512,6 +719,18 @@ def _parse_datetime(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
+def _parse_provider_datetime(value: str) -> datetime:
+    normalized = value.replace("Z", "+00:00")
+    try:
+        parsed = datetime.fromisoformat(normalized)
+    except ValueError:
+        parsed = datetime.strptime(value[:19], "%Y-%m-%dT%H:%M:%S")
+        parsed = parsed.replace(tzinfo=UTC)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
 def _coerce_float(value: object) -> float | None:
     if value in {None, ""}:
         return None
@@ -549,3 +768,49 @@ def _normalize_bias_label(value: str) -> str:
         "fakeout": "fakeout",
     }
     return aliases.get(normalized, "neutral")
+
+
+def _headline_query(symbol: str) -> str:
+    base, quote = split_symbol_currencies(symbol)
+    query_map = {
+        "XAUUSD": "gold OR XAUUSD OR Federal Reserve OR inflation",
+        "NAS100": "Nasdaq 100 OR US tech stocks OR Federal Reserve",
+        "BTCUSDT": "Bitcoin OR BTC OR crypto market",
+        "ETHUSDT": "Ethereum OR ETH OR crypto market",
+        "GBPUSD": "British pound OR sterling OR Bank of England OR US dollar",
+        "EURUSD": "euro OR ECB OR US dollar OR Federal Reserve",
+        "USDJPY": "US dollar OR Japanese yen OR Bank of Japan",
+        "USDCHF": "US dollar OR Swiss franc OR Swiss National Bank",
+        "AUDUSD": "Australian dollar OR RBA OR US dollar",
+        "NZDUSD": "New Zealand dollar OR RBNZ OR US dollar",
+        "AUDJPY": "Australian dollar OR Japanese yen OR RBA OR Bank of Japan",
+        "GBPJPY": "British pound OR Japanese yen OR Bank of England OR Bank of Japan",
+    }
+    if symbol.upper() in query_map:
+        return query_map[symbol.upper()]
+    return f"{base} {quote} forex market"
+
+
+def _headline_relevance(symbol: str, title: str) -> int:
+    normalized_title = str(title or "").lower()
+    base, quote = split_symbol_currencies(symbol)
+    score = 0
+    for token in {symbol.lower(), base.lower(), quote.lower()}:
+        if token and token in normalized_title:
+            score += 4
+    keyword_map = {
+        "xauusd": ["gold", "fed", "inflation", "treasury"],
+        "nas100": ["nasdaq", "tech", "stocks", "fed"],
+        "btcusdt": ["bitcoin", "btc", "crypto", "etf"],
+        "ethusdt": ["ethereum", "eth", "crypto", "defi"],
+    }
+    for keyword in keyword_map.get(symbol.lower(), ["forex", "central bank", "inflation"]):
+        if keyword in normalized_title:
+            score += 2
+    return score
+
+
+def _safe_xml_text(node) -> str:
+    if node is None or node.text is None:
+        return ""
+    return node.text.strip()
