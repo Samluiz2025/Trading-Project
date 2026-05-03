@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -11,56 +13,92 @@ from trading_bot.core.strategy_registry import ALL_LIVE_STRATEGIES, is_live_stra
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
-DIGITAL_TWIN_PATH = DATA_DIR / "digital_twin_state.json"
+DEFAULT_NAMESPACE = "normal"
 DEFAULT_BALANCE = 10_000.0
 DEFAULT_RISK_PER_TRADE = 200.0
 ACTIVE_STRATEGY = ALL_LIVE_STRATEGIES
 
 
-def load_digital_twin_state() -> dict[str, Any]:
+def _current_twin_namespace() -> str:
+    raw = str(os.getenv("MONITOR_STATE_NAMESPACE") or DEFAULT_NAMESPACE).strip().lower()
+    return raw or DEFAULT_NAMESPACE
+
+
+def _digital_twin_path(namespace: str | None = None) -> Path:
+    resolved = _current_twin_namespace() if namespace is None else str(namespace or DEFAULT_NAMESPACE).strip().lower() or DEFAULT_NAMESPACE
+    if resolved == DEFAULT_NAMESPACE:
+        return DATA_DIR / "digital_twin_state.json"
+    return DATA_DIR / f"digital_twin_state.{resolved}.json"
+
+
+def load_digital_twin_state(namespace: str | None = None) -> dict[str, Any]:
     """Load the persistent digital twin state or create a clean default snapshot."""
 
-    if not DIGITAL_TWIN_PATH.exists():
+    digital_twin_path = _digital_twin_path(namespace)
+    if not digital_twin_path.exists():
         return _default_twin_state()
     try:
-        raw = DIGITAL_TWIN_PATH.read_text(encoding="utf-8-sig")
+        raw = digital_twin_path.read_text(encoding="utf-8-sig")
     except OSError:
         return _default_twin_state()
 
     cleaned = raw.replace("\x00", "").strip()
     if not cleaned:
         default_state = _default_twin_state()
-        save_digital_twin_state(default_state)
+        save_digital_twin_state(default_state, namespace=namespace)
         return default_state
 
     try:
         state = json.loads(cleaned)
     except json.JSONDecodeError:
-        backup_path = DIGITAL_TWIN_PATH.with_suffix(".corrupt.json")
+        backup_path = digital_twin_path.with_suffix(".corrupt.json")
         try:
             backup_path.write_text(raw, encoding="utf-8", errors="ignore")
         except OSError:
             pass
         default_state = _default_twin_state()
-        save_digital_twin_state(default_state)
+        save_digital_twin_state(default_state, namespace=namespace)
         return default_state
 
     if not isinstance(state, dict):
         default_state = _default_twin_state()
-        save_digital_twin_state(default_state)
+        save_digital_twin_state(default_state, namespace=namespace)
         return default_state
     return _with_defaults(state)
 
 
-def save_digital_twin_state(state: dict[str, Any]) -> Path:
+def save_digital_twin_state(state: dict[str, Any], namespace: str | None = None) -> Path:
     """Persist the digital twin state for reuse across monitor restarts."""
 
     DATA_DIR.mkdir(parents=True, exist_ok=True)
+    digital_twin_path = _digital_twin_path(namespace)
+    temp_path = digital_twin_path.with_name(f"{digital_twin_path.stem}.{os.getpid()}.{time.time_ns()}.tmp")
     try:
-        DIGITAL_TWIN_PATH.write_text(json.dumps(_json_safe(state), separators=(",", ":")), encoding="utf-8")
+        temp_path.write_text(json.dumps(_json_safe(state), separators=(",", ":")), encoding="utf-8")
+        _replace_with_retry(temp_path, digital_twin_path)
     except OSError as exc:
         print(f"[WARN] Failed to save digital twin state: {exc}")
-    return DIGITAL_TWIN_PATH
+        try:
+            if temp_path.exists():
+                temp_path.unlink()
+        except OSError:
+            pass
+    return digital_twin_path
+
+
+def _replace_with_retry(temp_path: Path, target_path: Path, retries: int = 12) -> None:
+    last_error: OSError | None = None
+    for attempt in range(retries):
+        try:
+            temp_path.replace(target_path)
+            return
+        except OSError as exc:
+            last_error = exc
+            if attempt >= retries - 1:
+                break
+            time.sleep(min(1.0, 0.08 * (attempt + 1)))
+    if last_error is not None:
+        raise last_error
 
 
 def observe_strategy_result(
@@ -159,8 +197,12 @@ def register_virtual_trade(
         "opened_at": now,
         "bias": side,
         "entry": round(entry, 4),
+        "original_stop_loss": round(stop_loss, 4),
         "stop_loss": round(stop_loss, 4),
+        "active_stop_loss": round(stop_loss, 4),
+        "original_take_profit": round(take_profit, 4),
         "take_profit": round(take_profit, 4),
+        "active_take_profit": round(take_profit, 4),
         "risk_reward_ratio": rr,
         "risk_amount": round(risk_amount, 2),
         "projected_profit": projected_profit,
@@ -175,6 +217,9 @@ def register_virtual_trade(
         "lifecycle": setup.get("lifecycle"),
         "entry_triggered": False,
         "triggered_at": None,
+        "partial_taken": False,
+        "partial_taken_at": None,
+        "trade_management": dict(setup.get("trade_management") or {}),
         "news_context": {
             "pair_news_bias": str((news_context or {}).get("pair_news_bias", "neutral")).upper(),
             "news_lock_active": bool((news_context or {}).get("news_lock", {}).get("locked")),
@@ -223,7 +268,7 @@ def update_virtual_trade_outcomes(default_source: str = "auto") -> list[dict[str
         latest = candles.iloc[-1]
         current_close = float(latest["close"])
         _update_unrealized_metrics(trade, current_close)
-        close_update = _resolve_virtual_trade(trade, latest)
+        close_update = _resolve_virtual_trade(trade, latest, candles)
         if close_update is None:
             remaining_open.append(trade)
             continue
@@ -379,10 +424,10 @@ def _update_unrealized_metrics(trade: dict[str, Any], current_close: float) -> N
     trade["max_adverse_excursion"] = round(min(float(trade.get("max_adverse_excursion") or 0.0), pnl), 2)
 
 
-def _resolve_virtual_trade(trade: dict[str, Any], latest_candle) -> dict[str, Any] | None:
+def _resolve_virtual_trade(trade: dict[str, Any], latest_candle, recent_candles=None) -> dict[str, Any] | None:
     entry = float(trade["entry"])
-    stop_loss = float(trade["stop_loss"])
-    take_profit = float(trade["take_profit"])
+    stop_loss = float(trade.get("active_stop_loss") or trade["stop_loss"])
+    take_profit = float(trade.get("active_take_profit") or trade["take_profit"])
     candle_low = float(latest_candle["low"])
     candle_high = float(latest_candle["high"])
     side = str(trade.get("bias") or "").upper()
@@ -399,6 +444,18 @@ def _resolve_virtual_trade(trade: dict[str, Any], latest_candle) -> dict[str, An
         updates["triggered_at"] = datetime.now(UTC).isoformat()
         return updates
 
+    management = dict(trade.get("trade_management") or {})
+    partial_taken = bool(trade.get("partial_taken"))
+    if not partial_taken and bool(management.get("partial_enabled")):
+        partial_take_profit = float(management.get("partial_take_profit") or 0.0)
+        partial_hit = candle_high >= partial_take_profit if side == "BUY" else candle_low <= partial_take_profit
+        if partial_hit:
+            updates["partial_taken"] = True
+            updates["partial_taken_at"] = datetime.now(UTC).isoformat()
+            updates["active_stop_loss"] = round(float(management.get("break_even_stop") or entry), 4)
+            updates["stop_loss"] = round(float(management.get("break_even_stop") or entry), 4)
+            return updates
+
     if side == "BUY":
         stop_hit = candle_low <= stop_loss
         target_hit = candle_high >= take_profit
@@ -406,17 +463,40 @@ def _resolve_virtual_trade(trade: dict[str, Any], latest_candle) -> dict[str, An
         stop_hit = candle_high >= stop_loss
         target_hit = candle_low <= take_profit
 
+    if target_hit and not _is_confirmed_target_touch(
+        latest_candle,
+        recent_candles,
+        entry_price=entry,
+        take_profit=take_profit,
+        side=side,
+    ):
+        target_hit = False
+
+    if stop_hit and not _is_confirmed_stop_touch(
+        latest_candle,
+        recent_candles,
+        entry_price=entry,
+        stop_loss=stop_loss,
+        side=side,
+    ):
+        stop_hit = False
+
     if not stop_hit and not target_hit:
         return updates or None
 
     if stop_hit:
         return {
             **updates,
-            "status": "LOSS",
+            "status": "WIN" if partial_taken and float(management.get("locked_rr_after_partial") or 0.0) > 0 else "LOSS",
             "closed_at": datetime.now(UTC).isoformat(),
-            "close_reason": "STOP_LOSS_HIT",
-            "realized_pnl": round(-risk_amount, 2),
-            "rr_achieved": -1.0,
+            "close_reason": "BREAKEVEN_AFTER_PARTIAL" if partial_taken else "STOP_LOSS_HIT",
+            "managed_result": bool(partial_taken),
+            "stop_touch_confirmed": True,
+            "realized_pnl": round(
+                risk_amount * float(management.get("locked_rr_after_partial") or 0.0) if partial_taken else -risk_amount,
+                2,
+            ),
+            "rr_achieved": round(float(management.get("locked_rr_after_partial") or 0.0), 2) if partial_taken else -1.0,
             "unrealized_pnl": 0.0,
         }
 
@@ -424,11 +504,84 @@ def _resolve_virtual_trade(trade: dict[str, Any], latest_candle) -> dict[str, An
         **updates,
         "status": "WIN",
         "closed_at": datetime.now(UTC).isoformat(),
-        "close_reason": "TAKE_PROFIT_HIT",
-        "realized_pnl": round(reward_amount, 2),
-        "rr_achieved": round(float(trade.get("risk_reward_ratio") or 0.0), 2),
+        "close_reason": "TAKE_PROFIT_AFTER_PARTIAL" if partial_taken else "TAKE_PROFIT_HIT",
+        "managed_result": bool(partial_taken),
+        "target_touch_confirmed": True,
+        "realized_pnl": round(
+            risk_amount * float(management.get("realized_rr_at_primary") or 0.0) if partial_taken else reward_amount,
+            2,
+        ),
+        "rr_achieved": round(float(management.get("realized_rr_at_primary") or 0.0), 2) if partial_taken else round(float(trade.get("risk_reward_ratio") or 0.0), 2),
         "unrealized_pnl": 0.0,
     }
+
+
+def _is_confirmed_target_touch(latest_candle, recent_candles, *, entry_price: float, take_profit: float, side: str) -> bool:
+    close_price = _safe_float(latest_candle.get("close"))
+    open_price = _safe_float(latest_candle.get("open"))
+    high_price = _safe_float(latest_candle.get("high"))
+    low_price = _safe_float(latest_candle.get("low"))
+    current_range = abs(high_price - low_price)
+    prior_average_range = _average_recent_candle_range(recent_candles)
+    target_distance = abs(take_profit - entry_price)
+
+    confirmation_gap = max(prior_average_range * 0.75, target_distance * 0.25, current_range * 0.2)
+    if side == "BUY":
+        if close_price >= take_profit - confirmation_gap:
+            return True
+        upper_wick = max(0.0, high_price - max(open_price, close_price))
+        return upper_wick <= max(prior_average_range * 1.5, target_distance * 0.5)
+
+    if close_price <= take_profit + confirmation_gap:
+        return True
+    lower_wick = max(0.0, min(open_price, close_price) - low_price)
+    return lower_wick <= max(prior_average_range * 1.5, target_distance * 0.5)
+
+
+def _is_confirmed_stop_touch(latest_candle, recent_candles, *, entry_price: float, stop_loss: float, side: str) -> bool:
+    close_price = _safe_float(latest_candle.get("close"))
+    open_price = _safe_float(latest_candle.get("open"))
+    high_price = _safe_float(latest_candle.get("high"))
+    low_price = _safe_float(latest_candle.get("low"))
+    current_range = abs(high_price - low_price)
+    prior_average_range = _average_recent_candle_range(recent_candles)
+    stop_distance = abs(entry_price - stop_loss)
+
+    confirmation_gap = max(prior_average_range * 0.75, stop_distance * 0.25, current_range * 0.2)
+    if side == "BUY":
+        if close_price <= stop_loss + confirmation_gap:
+            return True
+        lower_wick = max(0.0, min(open_price, close_price) - low_price)
+        return lower_wick <= max(prior_average_range * 1.5, stop_distance * 0.5)
+
+    if close_price >= stop_loss - confirmation_gap:
+        return True
+    upper_wick = max(0.0, high_price - max(open_price, close_price))
+    return upper_wick <= max(prior_average_range * 1.5, stop_distance * 0.5)
+
+
+def _average_recent_candle_range(recent_candles) -> float:
+    if recent_candles is None:
+        return 0.0
+    try:
+        rows = recent_candles.to_dict("records")
+    except Exception:
+        return 0.0
+    if len(rows) > 1:
+        rows = rows[:-1]
+    ranges = [
+        abs(_safe_float(row.get("high")) - _safe_float(row.get("low")))
+        for row in rows
+        if row.get("high") is not None and row.get("low") is not None
+    ]
+    return (sum(ranges) / len(ranges)) if ranges else 0.0
+
+
+def _safe_float(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
 
 
 def _apply_account_close(state: dict[str, Any], trade: dict[str, Any]) -> None:

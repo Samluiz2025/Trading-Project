@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import os
+import time
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -8,7 +10,7 @@ from typing import Any
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 DATA_DIR = BASE_DIR / "data"
-STATE_PATH = DATA_DIR / "monitor_state.json"
+DEFAULT_NAMESPACE = "normal"
 MAX_ERROR_LENGTH = 240
 
 
@@ -35,36 +37,27 @@ def _default_monitor_state() -> dict[str, Any]:
     }
 
 
-def load_monitor_state() -> dict[str, Any]:
-    if not STATE_PATH.exists():
+def current_monitor_namespace() -> str:
+    raw = str(os.getenv("MONITOR_STATE_NAMESPACE") or DEFAULT_NAMESPACE).strip().lower()
+    return raw or DEFAULT_NAMESPACE
+
+
+def _state_path(namespace: str | None = None) -> Path:
+    resolved = current_monitor_namespace() if namespace is None else str(namespace or DEFAULT_NAMESPACE).strip().lower() or DEFAULT_NAMESPACE
+    if resolved == DEFAULT_NAMESPACE:
+        return DATA_DIR / "monitor_state.json"
+    return DATA_DIR / f"monitor_state.{resolved}.json"
+
+
+def load_monitor_state(namespace: str | None = None) -> dict[str, Any]:
+    state_path = _state_path(namespace)
+    if not state_path.exists():
         return _default_monitor_state()
 
-    try:
-        raw = STATE_PATH.read_text(encoding="utf-8-sig")
-    except OSError:
-        return _default_monitor_state()
-
-    cleaned = raw.replace("\x00", "").strip()
-    if not cleaned:
+    payload = _load_existing_monitor_state_payload(namespace=namespace)
+    if payload is None:
         default_state = _default_monitor_state()
-        save_monitor_state(default_state)
-        return default_state
-
-    try:
-        payload = json.loads(cleaned)
-    except json.JSONDecodeError:
-        backup_path = STATE_PATH.with_suffix(".corrupt.json")
-        try:
-            backup_path.write_text(raw, encoding="utf-8", errors="ignore")
-        except OSError:
-            pass
-        default_state = _default_monitor_state()
-        save_monitor_state(default_state)
-        return default_state
-
-    if not isinstance(payload, dict):
-        default_state = _default_monitor_state()
-        save_monitor_state(default_state)
+        save_monitor_state(default_state, namespace=namespace)
         return default_state
 
     default_state = _default_monitor_state()
@@ -80,19 +73,27 @@ def load_monitor_state() -> dict[str, Any]:
     return default_state
 
 
-def save_monitor_state(state: dict[str, Any]) -> Path:
+def save_monitor_state(state: dict[str, Any], namespace: str | None = None) -> Path:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
-    compacted = _compact_monitor_state(state)
+    state_path = _state_path(namespace)
+    compacted = _merge_persisted_state(_compact_monitor_state(state), namespace=namespace)
     payload = json.dumps(compacted, separators=(",", ":"))
+    temp_path = state_path.with_name(f"{state_path.stem}.{os.getpid()}.{time.time_ns()}.tmp")
     try:
-        STATE_PATH.write_text(payload, encoding="utf-8")
+        temp_path.write_text(payload, encoding="utf-8")
+        _replace_with_retry(temp_path, state_path)
     except OSError as exc:
         print(f"[WARN] Failed to save monitor state: {exc}")
-    return STATE_PATH
+        try:
+            if temp_path.exists():
+                temp_path.unlink()
+        except OSError:
+            pass
+    return state_path
 
 
-def mark_cycle_started(*, group: str, source: str, poll_interval_seconds: int) -> dict[str, Any]:
-    state = load_monitor_state()
+def mark_cycle_started(*, group: str, source: str, poll_interval_seconds: int, namespace: str | None = None) -> dict[str, Any]:
+    state = load_monitor_state(namespace=namespace)
     timestamp = datetime.now(UTC).isoformat()
     state["last_cycle_started_at"] = timestamp
     state["scanner"] = {
@@ -106,24 +107,24 @@ def mark_cycle_started(*, group: str, source: str, poll_interval_seconds: int) -
         "last_progress_at": timestamp,
         "last_completed_symbol": None,
     }
-    save_monitor_state(state)
+    save_monitor_state(state, namespace=namespace)
     return state
 
 
-def mark_cycle_completed() -> dict[str, Any]:
-    state = load_monitor_state()
+def mark_cycle_completed(namespace: str | None = None) -> dict[str, Any]:
+    state = load_monitor_state(namespace=namespace)
     timestamp = datetime.now(UTC).isoformat()
     state["last_successful_scan"] = timestamp
     scanner = state.setdefault("scanner", {})
     scanner["running"] = True
     scanner["current_symbol"] = None
     scanner["last_progress_at"] = timestamp
-    save_monitor_state(state)
+    save_monitor_state(state, namespace=namespace)
     return state
 
 
-def record_cycle_progress(*, symbol: str, completed_symbols: int, total_symbols: int, phase: str = "completed") -> dict[str, Any]:
-    state = load_monitor_state()
+def record_cycle_progress(*, symbol: str, completed_symbols: int, total_symbols: int, phase: str = "completed", namespace: str | None = None) -> dict[str, Any]:
+    state = load_monitor_state(namespace=namespace)
     scanner = state.setdefault("scanner", {})
     timestamp = datetime.now(UTC).isoformat()
     normalized_symbol = str(symbol or "").upper() or None
@@ -136,12 +137,12 @@ def record_cycle_progress(*, symbol: str, completed_symbols: int, total_symbols:
     else:
         scanner["current_symbol"] = None
         scanner["last_completed_symbol"] = normalized_symbol
-    save_monitor_state(state)
+    save_monitor_state(state, namespace=namespace)
     return state
 
 
-def update_symbol_health(symbol: str, *, ok: bool, source: str, error: str | None = None) -> dict[str, Any]:
-    state = load_monitor_state()
+def update_symbol_health(symbol: str, *, ok: bool, source: str, error: str | None = None, namespace: str | None = None) -> dict[str, Any]:
+    state = load_monitor_state(namespace=namespace)
     health = state.setdefault("data_source_health", {})
     health[str(symbol).upper()] = {
         "ok": ok,
@@ -149,56 +150,57 @@ def update_symbol_health(symbol: str, *, ok: bool, source: str, error: str | Non
         "last_checked": datetime.now(UTC).isoformat(),
         "last_error": _trim_error_message(error),
     }
-    save_monitor_state(state)
+    save_monitor_state(state, namespace=namespace)
     return state
 
 
-def record_telegram_delivery(ok: bool, error: str | None = None) -> dict[str, Any]:
-    state = load_monitor_state()
+def record_telegram_delivery(ok: bool, error: str | None = None, namespace: str | None = None) -> dict[str, Any]:
+    state = load_monitor_state(namespace=namespace)
     telegram = state.setdefault("telegram", {})
     timestamp = datetime.now(UTC).isoformat()
     if ok:
         telegram["last_ok"] = timestamp
+        telegram["last_error"] = None
     else:
         telegram["last_error"] = {"time": timestamp, "error": error}
-    save_monitor_state(state)
+    save_monitor_state(state, namespace=namespace)
     return state
 
 
-def load_alert_contexts() -> dict[str, dict[str, Any]]:
-    return load_monitor_state().get("alert_contexts", {})
+def load_alert_contexts(namespace: str | None = None) -> dict[str, dict[str, Any]]:
+    return load_monitor_state(namespace=namespace).get("alert_contexts", {})
 
 
-def save_alert_contexts(contexts: dict[str, dict[str, Any]]) -> dict[str, Any]:
-    state = load_monitor_state()
+def save_alert_contexts(contexts: dict[str, dict[str, Any]], namespace: str | None = None) -> dict[str, Any]:
+    state = load_monitor_state(namespace=namespace)
     state["alert_contexts"] = contexts
-    save_monitor_state(state)
+    save_monitor_state(state, namespace=namespace)
     return state
 
 
-def should_send_digest(name: str, digest_date: str) -> bool:
-    state = load_monitor_state()
+def should_send_digest(name: str, digest_date: str, namespace: str | None = None) -> bool:
+    state = load_monitor_state(namespace=namespace)
     digests = state.setdefault("digests_sent", {})
     return digests.get(name) != digest_date
 
 
-def mark_digest_sent(name: str, digest_date: str) -> dict[str, Any]:
-    state = load_monitor_state()
+def mark_digest_sent(name: str, digest_date: str, namespace: str | None = None) -> dict[str, Any]:
+    state = load_monitor_state(namespace=namespace)
     digests = state.setdefault("digests_sent", {})
     digests[name] = digest_date
-    save_monitor_state(state)
+    save_monitor_state(state, namespace=namespace)
     return state
 
 
-def reset_runtime_monitor_state(*, keep_telegram_status: bool = True) -> dict[str, Any]:
-    current = load_monitor_state()
+def reset_runtime_monitor_state(*, keep_telegram_status: bool = True, namespace: str | None = None) -> dict[str, Any]:
+    current = load_monitor_state(namespace=namespace)
     state = _default_monitor_state()
     if keep_telegram_status:
         state["telegram"] = {
             **state["telegram"],
             **(current.get("telegram") or {}),
         }
-    save_monitor_state(state)
+    save_monitor_state(state, namespace=namespace)
     return state
 
 
@@ -209,8 +211,9 @@ def record_scan_diagnostics(
     selected_candidates: list[dict[str, Any]],
     blocked_candidates: list[dict[str, Any]],
     rejected_candidates: list[dict[str, Any]],
+    namespace: str | None = None,
 ) -> dict[str, Any]:
-    state = load_monitor_state()
+    state = load_monitor_state(namespace=namespace)
     state["scan_diagnostics"] = {
         "last_updated_at": datetime.now(UTC).isoformat(),
         "evaluated_symbols": int(evaluated_symbols),
@@ -222,12 +225,12 @@ def record_scan_diagnostics(
         "blocked_candidates": [_compact_candidate(item) for item in blocked_candidates[:12]],
         "rejected_candidates": [_compact_candidate(item) for item in rejected_candidates[:12]],
     }
-    save_monitor_state(state)
+    save_monitor_state(state, namespace=namespace)
     return state
 
 
-def build_scanner_health_snapshot(state: dict[str, Any] | None = None) -> dict[str, Any]:
-    active_state = state or load_monitor_state()
+def build_scanner_health_snapshot(state: dict[str, Any] | None = None, namespace: str | None = None) -> dict[str, Any]:
+    active_state = state or load_monitor_state(namespace=namespace)
     scanner = dict(active_state.get("scanner") or {})
     poll_interval_seconds = int(scanner.get("poll_interval_seconds") or 0)
     total_symbols = int(scanner.get("total_symbols") or 0)
@@ -315,6 +318,58 @@ def _compact_monitor_state(state: dict[str, Any]) -> dict[str, Any]:
     return compacted
 
 
+def _merge_persisted_state(state: dict[str, Any], namespace: str | None = None) -> dict[str, Any]:
+    persisted = _load_existing_monitor_state_payload(namespace=namespace)
+    if not isinstance(persisted, dict):
+        persisted = _default_monitor_state()
+
+    merged = dict(state)
+    merged["digests_sent"] = {
+        **dict(persisted.get("digests_sent") or {}),
+        **dict(state.get("digests_sent") or {}),
+    }
+    merged["telegram"] = {
+        **dict(persisted.get("telegram") or {}),
+        **dict(state.get("telegram") or {}),
+    }
+    merged["data_source_health"] = {
+        **dict(persisted.get("data_source_health") or {}),
+        **dict(state.get("data_source_health") or {}),
+    }
+    return merged
+
+
+def _load_existing_monitor_state_payload(namespace: str | None = None) -> dict[str, Any] | None:
+    state_path = _state_path(namespace)
+    if not state_path.exists():
+        return None
+    try:
+        raw = state_path.read_text(encoding="utf-8-sig")
+    except OSError:
+        return None
+
+    cleaned = raw.replace("\x00", "").strip()
+    if not cleaned:
+        _backup_corrupt_state(state_path, raw)
+        return None
+
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError:
+        _backup_corrupt_state(state_path, raw)
+        return None
+
+    return payload if isinstance(payload, dict) else None
+
+
+def _backup_corrupt_state(state_path: Path, raw: str) -> None:
+    backup_path = state_path.with_suffix(".corrupt.json")
+    try:
+        backup_path.write_text(raw, encoding="utf-8", errors="ignore")
+    except OSError:
+        pass
+
+
 def _compact_candidate(item: dict[str, Any]) -> dict[str, Any]:
     payload = dict(item or {})
     return {
@@ -359,3 +414,18 @@ def _age_seconds(now: datetime, earlier: datetime | None) -> int | None:
     if earlier is None:
         return None
     return max(int((now - earlier).total_seconds()), 0)
+
+
+def _replace_with_retry(temp_path: Path, state_path: Path, retries: int = 12) -> None:
+    last_error: OSError | None = None
+    for attempt in range(retries):
+        try:
+            temp_path.replace(state_path)
+            return
+        except OSError as exc:
+            last_error = exc
+            if attempt >= retries - 1:
+                break
+            time.sleep(min(1.0, 0.08 * (attempt + 1)))
+    if last_error is not None:
+        raise last_error

@@ -1,148 +1,106 @@
+"""
+confluence_engine.py
+─────────────────────────────────────────────────────────────────────────────
+Confluence aggregator: combines signals from multiple sources into a
+single weighted confluence object used by the API and scanner.
+─────────────────────────────────────────────────────────────────────────────
+"""
+
 from __future__ import annotations
-
-from datetime import UTC, datetime
-
+from dataclasses import dataclass, field
+from typing import Optional
 import pandas as pd
 
-from trading_bot.core.filter_engine import filter_trade
-from trading_bot.core.strategy_htf_zone import build_htf_zone_reaction_config, generate_htf_zone_reaction_setup
-from trading_bot.core.strategy_pullback import build_pullback_continuation_config, generate_pullback_continuation_setup
-from trading_bot.core.strategy_registry import HTF_ZONE_STRATEGY, PULLBACK_STRATEGY, PRIMARY_STRATEGY
-from trading_bot.core.strategy_strict_liquidity import build_strict_liquidity_config, generate_strict_liquidity_setup
+from .strategy_strict_liquidity import (
+    _daily_bias, _h4_bias, _higher_highs_lower_lows,
+    _adx, _rsi, _atr, _ema, _liquidity_swept,
+    _structure_break, _find_order_blocks, _find_fvg,
+    _session_ok, _score_setup, _confidence_label,
+)
 
 
-def evaluate_symbol(
+@dataclass
+class ConfluenceReport:
+    symbol:         str
+    bias:           str          # BUY / SELL / NEUTRAL
+    quality_score:  int
+    confidence:     str
+    confluences:    list = field(default_factory=list)
+    missing:        list = field(default_factory=list)
+    daily_bias:     str = "NEUTRAL"
+    h4_bias:        str = "NEUTRAL"
+    h1_structure:   str = "RANGING"
+    adx:            float = 0.0
+    rsi:            float = 50.0
+    session:        str = "Off-session"
+    has_ob:         bool = False
+    has_fvg:        bool = False
+    has_sweep:      bool = False
+    has_bos:        bool = False
+    atr:            float = 0.0
+
+    def to_dict(self) -> dict:
+        return self.__dict__
+
+
+def build_confluence_report(
     symbol: str,
-    weekly_data: pd.DataFrame | None,
-    daily_data: pd.DataFrame,
-    h1_data: pd.DataFrame,
-    ltf_data: pd.DataFrame | None = None,
-    h4_data: pd.DataFrame | None = None,
-) -> dict:
-    strict_result = generate_strict_liquidity_setup(
-        symbol=symbol,
-        daily_data=daily_data,
-        h1_data=h1_data,
-        m15_data=ltf_data,
-        config=build_strict_liquidity_config(symbol),
-    )
-    pullback_result = generate_pullback_continuation_setup(
-        symbol=symbol,
-        daily_data=daily_data,
-        h1_data=h1_data,
-        m15_data=ltf_data,
-        config=build_pullback_continuation_config(symbol),
-    )
-    htf_zone_result = generate_htf_zone_reaction_setup(
-        symbol=symbol,
-        daily_data=daily_data,
-        h1_data=h1_data,
-        m15_data=ltf_data,
-        config=build_htf_zone_reaction_config(symbol),
-    )
-    strategy_results = {
-        "strict_liquidity": strict_result,
-        "pullback": pullback_result,
-        "htf_zone": htf_zone_result,
-    }
-    latest_price = round(float((ltf_data if ltf_data is not None else h1_data).iloc[-1]["close"]), 4)
-    selected = _select_best_result(strict_result, pullback_result, htf_zone_result)
+    df_daily: pd.DataFrame,
+    df_h4:   pd.DataFrame,
+    df_h1:   pd.DataFrame,
+    df_m15:  pd.DataFrame,
+) -> ConfluenceReport:
+    """
+    Build a complete confluence report without making a trade decision.
+    Used by the dashboard to show the confluence map.
+    """
+    daily_b   = _daily_bias(df_daily) if len(df_daily) >= 55 else "NEUTRAL"
+    h4_b      = _h4_bias(df_h4) if len(df_h4) >= 25 else "NEUTRAL"
+    h1_struct = _higher_highs_lower_lows(df_h1) if len(df_h1) >= 30 else "RANGING"
+    adx_val   = _adx(df_h1) if len(df_h1) >= 20 else 0.0
+    rsi_val   = _rsi(df_h1) if len(df_h1) >= 20 else 50.0
+    atr_val   = _atr(df_h1) if len(df_h1) >= 20 else 0.0
+    sess_ok, session_name = _session_ok()
 
-    if selected.get("status") != "VALID_TRADE":
-        candidate = filter_trade(selected)
-        candidate.update(
-            {
-                "status": selected.get("status", candidate.get("status")),
-                "message": selected.get("message", candidate.get("message")),
-                "pair": str(symbol).upper(),
-                "daily_bias": selected.get("daily_bias"),
-                "h1_bias": selected.get("h1_bias"),
-                "latest_price": latest_price,
-                "strategies_checked": [PRIMARY_STRATEGY, PULLBACK_STRATEGY, HTF_ZONE_STRATEGY],
-                "strategy_results": strategy_results,
-                "confidence": selected.get("confidence", candidate.get("confidence", "LOW")),
-                "confidence_score": selected.get("confidence_score", candidate.get("confidence_score", 0)),
-                "risk_reward_ratio": selected.get("risk_reward_ratio"),
-                "lifecycle": selected.get("lifecycle", candidate.get("lifecycle", "no_trade")),
-                "stalker": selected.get("stalker"),
-                "timestamp": datetime.now(UTC).isoformat(),
-                "session": selected.get("session"),
-                "setup_grade": selected.get("setup_grade"),
-                "setup_type": selected.get("setup_type"),
-                "invalidation": selected.get("invalidation"),
-                "reason": selected.get("reason") or selected.get("message"),
-                "analysis_context": selected.get("analysis_context", {}),
-                "details": selected.get("details", {}),
-                "confluences": selected.get("confluences", []),
-                "strategies": selected.get("strategies", [selected.get("strategy") or PRIMARY_STRATEGY]),
-                "strategy": selected.get("strategy", PRIMARY_STRATEGY),
-                "bias": selected.get("bias"),
-                "entry": selected.get("entry"),
-                "sl": selected.get("sl"),
-                "tp": selected.get("tp"),
-            }
-        )
-        return candidate
+    bias = "BUY" if daily_b == "BULLISH" else ("SELL" if daily_b == "BEARISH" else "NEUTRAL")
 
-    return {
-        "status": "VALID_TRADE",
-        "message": "Valid trade setup available",
-        "pair": str(symbol).upper(),
-        "bias": selected["bias"],
-        "entry": selected["entry"],
-        "sl": selected["sl"],
-        "tp": selected["tp"],
-        "risk_reward_ratio": selected.get("risk_reward_ratio"),
-        "confidence": selected.get("confidence"),
-        "confidence_score": selected.get("confidence_score"),
-        "strategies": selected.get("strategies", [selected.get("strategy") or PRIMARY_STRATEGY]),
-        "strategy": selected.get("strategy", PRIMARY_STRATEGY),
-        "confluences": selected.get("confluences", []),
-        "missing": [],
-        "lifecycle": selected.get("lifecycle", "entry_reached"),
-        "stalker": None,
-        "daily_bias": selected.get("daily_bias"),
-        "h1_bias": selected.get("h1_bias"),
-        "latest_price": latest_price,
-        "strategy_results": strategy_results,
-        "strategies_checked": [PRIMARY_STRATEGY, PULLBACK_STRATEGY, HTF_ZONE_STRATEGY],
-        "timestamp": datetime.now(UTC).isoformat(),
-        "session": selected.get("session"),
-        "setup_grade": selected.get("setup_grade"),
-        "setup_type": selected.get("setup_type"),
-        "invalidation": selected.get("invalidation"),
-        "reason": selected.get("reason"),
-        "analysis_context": selected.get("analysis_context", {}),
-        "details": selected.get("details", {}),
-    }
+    liq_swept = _liquidity_swept(df_h1, bias) if bias != "NEUTRAL" else False
+    bos       = _structure_break(df_m15, bias) if bias != "NEUTRAL" else False
+    ob_l, ob_h = _find_order_blocks(df_h1, bias) if bias != "NEUTRAL" else (None, None)
+    ob_found  = ob_l is not None
+    fvg_found = _find_fvg(df_m15, bias) if bias != "NEUTRAL" else False
 
+    score, confluences, missing = _score_setup(
+        daily_bias      = daily_b,
+        h4_bias         = h4_b,
+        h1_structure    = h1_struct,
+        adx             = adx_val,
+        rsi             = rsi_val,
+        bias            = bias,
+        liquidity_swept = liq_swept,
+        bos_confirmed   = bos,
+        ob_found        = ob_found,
+        fvg_found       = fvg_found,
+        session_ok      = sess_ok,
+        rr              = 3.5,  # assumed valid for report
+    ) if bias != "NEUTRAL" else (0, [], ["No daily bias"])
 
-def _select_best_result(*results: dict) -> dict:
-    ranked = sorted(results, key=_result_rank, reverse=True)
-    return ranked[0]
-
-
-def _result_rank(result: dict) -> tuple[int, float, float, float, int]:
-    status = str(result.get("status") or "NO TRADE").upper()
-    status_rank = {
-        "VALID_TRADE": 3,
-        "WAIT_CONFIRMATION": 2,
-        "NO TRADE": 1,
-    }.get(status, 0)
-    grade_rank = {
-        "A+": 4,
-        "A": 3,
-        "B": 2,
-        "C": 1,
-    }.get(str(result.get("setup_grade") or "").upper(), 0)
-    confidence_score = float(result.get("confidence_score") or 0.0)
-    risk_reward = float(result.get("risk_reward_ratio") or 0.0)
-    confluence_count = len(result.get("confluences") or [])
-    stalker_score = float((result.get("stalker") or {}).get("score") or 0.0)
-    return (
-        status_rank,
-        grade_rank,
-        confidence_score + stalker_score * 0.2,
-        risk_reward,
-        confluence_count,
+    return ConfluenceReport(
+        symbol        = symbol,
+        bias          = bias,
+        quality_score = score,
+        confidence    = _confidence_label(score),
+        confluences   = confluences,
+        missing       = missing,
+        daily_bias    = daily_b,
+        h4_bias       = h4_b,
+        h1_structure  = h1_struct,
+        adx           = round(adx_val, 1),
+        rsi           = round(rsi_val, 1),
+        session       = session_name,
+        has_ob        = ob_found,
+        has_fvg       = fvg_found,
+        has_sweep     = liq_swept,
+        has_bos       = bos,
+        atr           = round(atr_val, 6),
     )

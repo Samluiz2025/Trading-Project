@@ -18,16 +18,19 @@ def _reset_pending_telegram_queue() -> None:
 
 
 def main() -> None:
-    reset_runtime_monitor_state(keep_telegram_status=True)
+    reset_runtime_monitor_state(keep_telegram_status=True, namespace="normal")
+    reset_runtime_monitor_state(keep_telegram_status=True, namespace="challenge")
     _reset_pending_telegram_queue()
-    save_digital_twin_state(_default_twin_state())
+    save_digital_twin_state(_default_twin_state(), namespace="normal")
+    save_digital_twin_state(_default_twin_state(), namespace="challenge")
     print(
         json.dumps(
             {
                 "status": "ok",
                 "message": "Monday-start runtime reset completed.",
                 "reset": [
-                    "monitor_state runtime",
+                    "normal monitor_state runtime",
+                    "challenge monitor_state runtime",
                     "scan diagnostics",
                     "alert contexts",
                     "symbol health",

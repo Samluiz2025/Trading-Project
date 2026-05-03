@@ -21,4 +21,14 @@ if (-not (Test-Path $pythonPath)) {
 }
 
 Set-Location $workspace
-& $pythonPath -m uvicorn trading_bot.api.main:app --reload
+$reloadRaw = ""
+if ($null -ne $env:API_RELOAD) {
+    $reloadRaw = [string]$env:API_RELOAD
+}
+$reloadEnabled = ($reloadRaw.ToLower() -in @("1", "true", "yes", "on"))
+if ($reloadEnabled) {
+    & $pythonPath -m uvicorn trading_bot.api.main:app --reload --reload-dir trading_bot\api --reload-dir trading_bot\core --reload-dir frontend --reload-exclude trading_bot\data\*
+}
+else {
+    & $pythonPath -m uvicorn trading_bot.api.main:app
+}

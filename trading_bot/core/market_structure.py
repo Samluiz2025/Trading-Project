@@ -138,6 +138,21 @@ def _determine_trend(labeled_swings: list[dict]) -> TrendLabel:
     if recent_high_labels == ["LH", "LH"] and recent_low_labels == ["LL", "LL"]:
         return "bearish"
 
+    # Fallback: if the latest structure is slightly mixed, use the recent swing
+    # sequence to keep directional markets from being marked as ranging too easily.
+    recent_highs = [swing["label"] for swing in labeled_swings if swing["type"] == "high"][-3:]
+    recent_lows = [swing["label"] for swing in labeled_swings if swing["type"] == "low"][-3:]
+    bullish_highs = sum(1 for label in recent_highs if label == "HH")
+    bearish_highs = sum(1 for label in recent_highs if label == "LH")
+    bullish_lows = sum(1 for label in recent_lows if label == "HL")
+    bearish_lows = sum(1 for label in recent_lows if label == "LL")
+
+    if recent_highs and recent_lows:
+        if bullish_highs >= bearish_highs and bullish_lows >= bearish_lows and (bullish_highs + bullish_lows) >= 3:
+            return "bullish"
+        if bearish_highs >= bullish_highs and bearish_lows >= bullish_lows and (bearish_highs + bearish_lows) >= 3:
+            return "bearish"
+
     return "ranging"
 
 

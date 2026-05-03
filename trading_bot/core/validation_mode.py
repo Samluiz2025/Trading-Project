@@ -273,9 +273,9 @@ def _classify_symbol(symbol: str) -> str:
     normalized = str(symbol or "").upper()
     if normalized.endswith("USDT"):
         return "crypto"
-    if normalized in {"NAS100", "SP500", "US30", "GER40", "UK100", "JP225"}:
+    if normalized in {"NAS100", "SP500", "US30", "GER40", "UK100", "JP225", "JPN225"}:
         return "indices"
-    if normalized.startswith("XAU") or normalized.startswith("XAG"):
+    if normalized.startswith("XAU") or normalized.startswith("XAG") or normalized in {"USOIL", "WTI"}:
         return "metals"
     if len(normalized) == 6 and normalized.isalpha():
         return "forex"

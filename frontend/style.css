@@ -48,6 +48,17 @@ body {
     margin-bottom: 18px;
 }
 
+.health-strip {
+    margin-bottom: 18px;
+}
+
+.strategy-lab-highlights {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 12px;
+    margin-bottom: 14px;
+}
+
 .eyebrow {
     margin: 0 0 8px;
     color: var(--blue);
@@ -67,6 +78,55 @@ body {
     margin: 0;
     color: var(--muted);
     max-width: 760px;
+}
+
+.forward-test-banner {
+    display: inline-flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+    margin-top: 16px;
+    padding: 10px 14px;
+    border-radius: 999px;
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    background: rgba(255, 255, 255, 0.04);
+    color: var(--text);
+}
+
+.forward-test-banner strong {
+    font-size: 0.82rem;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+
+.forward-test-banner span {
+    color: var(--muted);
+    font-size: 0.95rem;
+}
+
+.forward-test-banner-active {
+    border-color: rgba(46, 204, 113, 0.45);
+    background: rgba(46, 204, 113, 0.12);
+}
+
+.forward-test-banner-active span,
+.forward-test-banner-active strong {
+    color: #dff8ea;
+}
+
+.forward-test-banner-off {
+    border-color: rgba(255, 107, 107, 0.38);
+    background: rgba(255, 107, 107, 0.1);
+}
+
+.forward-test-banner-off span,
+.forward-test-banner-off strong {
+    color: #ffdada;
+}
+
+.forward-test-banner-neutral {
+    border-color: rgba(93, 173, 226, 0.25);
+    background: rgba(93, 173, 226, 0.08);
 }
 
 .hero-controls {
@@ -255,6 +315,37 @@ button {
     padding: 6px 2px 0;
 }
 
+.strategy-lab-table-wrap {
+    background: rgba(9, 17, 26, 0.92);
+    border: 1px solid rgba(148, 163, 184, 0.18);
+    border-radius: 18px;
+    padding: 1rem;
+    overflow-x: auto;
+}
+
+.strategy-table {
+    width: 100%;
+    border-collapse: collapse;
+    min-width: 720px;
+}
+
+.strategy-table th,
+.strategy-table td {
+    padding: 0.7rem 0.75rem;
+    border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+    text-align: left;
+    vertical-align: top;
+    font-size: 0.92rem;
+}
+
+.strategy-table th {
+    color: var(--muted);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-size: 0.75rem;
+}
+
 .watchlist-item {
     display: grid;
     gap: 8px;
@@ -345,6 +436,13 @@ button {
     padding: 0 18px 18px;
 }
 
+.health-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 12px;
+    padding: 0 18px 18px;
+}
+
 .metric-card {
     padding: 14px;
     border-radius: 14px;
@@ -357,6 +455,72 @@ button {
     margin-top: 6px;
     font-size: 18px;
     text-transform: uppercase;
+}
+
+.stage-value {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    padding: 8px 10px;
+    border-radius: 12px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.stage-pill {
+    display: inline-flex;
+    align-items: center;
+    padding: 4px 8px;
+    border-radius: 999px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    font-size: 11px;
+    font-weight: 800;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    vertical-align: middle;
+}
+
+.stage-zone-watch,
+.stage-no-trade,
+.stage-closed {
+    color: #d6dde6;
+    background: rgba(214, 221, 230, 0.14);
+}
+
+.stage-wait-confirmation,
+.stage-entry-zone-reached,
+.stage-forming {
+    color: #8fd6ff;
+    background: rgba(93, 173, 226, 0.18);
+}
+
+.stage-valid-setup,
+.stage-win {
+    color: #7ff0aa;
+    background: rgba(46, 204, 113, 0.18);
+}
+
+.stage-trade-open {
+    color: #ffe082;
+    background: rgba(241, 196, 15, 0.18);
+}
+
+.stage-loss {
+    color: #ff9b9b;
+    background: rgba(255, 107, 107, 0.18);
+}
+
+.health-card {
+    padding: 14px;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.health-card strong {
+    display: block;
+    margin-top: 6px;
+    font-size: 18px;
 }
 
 .setup-map {
@@ -506,6 +670,7 @@ button {
 @media (max-width: 860px) {
     .split-grid,
     .metrics-grid,
+    .health-grid,
     .rr-strip {
         grid-template-columns: 1fr;
     }

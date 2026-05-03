@@ -7,6 +7,7 @@ const state = {
     requestId: 0,
     journalFilters: {
         pair: "",
+        strategy: "",
         result: "",
         quality: "",
         month: "",
@@ -178,6 +179,93 @@ function humanizeReasons(reasons) {
     return items.map(humanizeReason);
 }
 
+function getLifecycleView(payload = {}) {
+    const status = String(payload.status || "").toUpperCase();
+    const lifecycle = String(payload.lifecycle || "").toLowerCase();
+    const result = String(payload.result || "").toUpperCase();
+
+    if (result === "WIN" || status === "WIN") {
+        return { label: "WIN", tone: "buy", pillClass: "stage-win", next: "Trade is complete.", note: "Take profit was reached." };
+    }
+    if (result === "LOSS" || status === "LOSS") {
+        return { label: "LOSS", tone: "sell", pillClass: "stage-loss", next: "Trade is complete.", note: "Stop loss was reached." };
+    }
+    if (status === "WAIT_CONFIRMATION") {
+        return {
+            label: "WAIT CONFIRMATION",
+            tone: "info",
+            pillClass: "stage-wait-confirmation",
+            next: "Wait for the lower-timeframe structure shift and retest hold before entering.",
+            note: "The zone is interesting, but entry confirmation is still missing.",
+        };
+    }
+    if (status === "VALID_TRADE" && lifecycle === "active") {
+        return {
+            label: "TRADE OPEN",
+            tone: "neutral",
+            pillClass: "stage-trade-open",
+            next: "Manage the live trade and let the lifecycle updates track outcome.",
+            note: "A valid setup exists and is already considered active in the journal state.",
+        };
+    }
+    if (status === "VALID_TRADE" && lifecycle === "closed") {
+        return {
+            label: "CLOSED",
+            tone: "neutral",
+            pillClass: "stage-closed",
+            next: "Review the trade result in the journal.",
+            note: "This setup has already completed.",
+        };
+    }
+    if (lifecycle === "entry_reached") {
+        return {
+            label: "ENTRY ZONE REACHED",
+            tone: "info",
+            pillClass: "stage-entry-zone-reached",
+            next: "Wait for confirmation before entering unless the setup is already marked valid.",
+            note: "Price is at the area of interest now.",
+        };
+    }
+    if (lifecycle === "zone_watch") {
+        return {
+            label: "ZONE WATCH",
+            tone: "neutral",
+            pillClass: "stage-zone-watch",
+            next: "Wait for price to reach the zone and react.",
+            note: "This is an early plan, not an entry yet.",
+        };
+    }
+    if (status === "VALID_TRADE") {
+        return {
+            label: "VALID SETUP",
+            tone: String(payload.bias || "").toUpperCase() === "BUY" ? "buy" : "sell",
+            pillClass: "stage-valid-setup",
+            next: "Use the entry, SL, and TP levels exactly as mapped.",
+            note: "This setup currently meets the rules.",
+        };
+    }
+    if (status === "NO TRADE") {
+        return {
+            label: "NO TRADE",
+            tone: "neutral",
+            pillClass: "stage-no-trade",
+            next: "Do nothing until the missing conditions are present.",
+            note: "The setup is not complete yet.",
+        };
+    }
+    return {
+        label: "SETUP FORMING",
+        tone: "info",
+        pillClass: "stage-forming",
+        next: "Keep monitoring for structure, liquidity, and confirmation.",
+        note: "The idea is still developing.",
+    };
+}
+
+function renderLifecyclePill(lifecycleView) {
+    return `<span class="stage-pill ${lifecycleView?.pillClass || "stage-forming"}">${lifecycleView?.label || "-"}</span>`;
+}
+
 function renderLoadingState() {
     document.getElementById("final-bias").textContent = "LOADING";
     document.getElementById("final-bias").className = "final-bias neutral";
@@ -186,7 +274,12 @@ function renderLoadingState() {
     document.getElementById("technical-bias").textContent = "-";
     document.getElementById("confidence").textContent = "...";
     document.getElementById("live-price-badge").textContent = "Price: ...";
+    const banner = document.getElementById("forward-test-banner");
+    banner.className = "forward-test-banner forward-test-banner-neutral";
+    banner.innerHTML = "<strong>Forward Test</strong><span>Checking runtime status...</span>";
+    document.getElementById("forward-test-health-panel").innerHTML = '<div class="empty-state">Refreshing forward-test health...</div>';
     document.getElementById("setup-panel").innerHTML = '<div class="empty-state">Refreshing analysis...</div>';
+    document.getElementById("lifecycle-panel").innerHTML = '<div class="empty-state">Refreshing lifecycle...</div>';
     document.getElementById("checklist-panel").innerHTML = '<div class="empty-state">Refreshing checklist...</div>';
     document.getElementById("live-setups-panel").innerHTML = '<div class="empty-state">Refreshing live setups...</div>';
     document.getElementById("cluster-panel").innerHTML = '<div class="empty-state">Refreshing cluster alignment...</div>';
@@ -196,14 +289,22 @@ function renderLoadingState() {
     document.getElementById("htf-panel").innerHTML = '<div class="empty-state">Refreshing timeframes...</div>';
     document.getElementById("overlay-panel").innerHTML = '<div class="empty-state">Refreshing overlays...</div>';
     document.getElementById("alerts-panel").innerHTML = '<div class="empty-state">Refreshing alerts...</div>';
+    document.getElementById("forward-test-panel").innerHTML = '<div class="empty-state">Refreshing forward-test review...</div>';
+    document.getElementById("strategy-lab-panel").innerHTML = '<div class="empty-state">Refreshing strategy lab...</div>';
     document.getElementById("journal-panel").innerHTML = '<div class="empty-state">Refreshing journal...</div>';
     document.getElementById("news-panel").innerHTML = '<div class="empty-state">Refreshing news...</div>';
+    document.getElementById("broker-drafts-panel").innerHTML = '<div class="empty-state">Refreshing broker drafts...</div>';
+    document.getElementById("execution-control-panel").innerHTML = '<div class="empty-state">Refreshing execution controls...</div>';
+    document.getElementById("execution-scorecards-panel").innerHTML = '<div class="empty-state">Refreshing execution scorecards...</div>';
     document.getElementById("digital-twin-panel").innerHTML = '<div class="empty-state">Refreshing digital twin...</div>';
     document.getElementById("fractal-panel").innerHTML = '<div class="empty-state">Refreshing fractal context...</div>';
 }
 
 function renderErrorState(message) {
     renderBias({ final_bias: "NEUTRAL", daily_bias: "-", h1_bias: "-", status: "ERROR", confidence: "-", latest_price: null });
+    const banner = document.getElementById("forward-test-banner");
+    banner.className = "forward-test-banner forward-test-banner-off";
+    banner.innerHTML = `<strong>Forward Test</strong><span>${message || "Dashboard data unavailable right now."}</span>`;
     document.getElementById("setup-panel").innerHTML = createCard("Error fetching data", [message || "Server error"], "sell", "error");
     document.getElementById("checklist-panel").innerHTML = createCard("Error fetching data", [message || "Server error"], "sell", "error");
     document.getElementById("live-setups-panel").innerHTML = createCard("Error fetching data", [message || "Server error"], "sell", "error");
@@ -214,30 +315,41 @@ function renderErrorState(message) {
     document.getElementById("htf-panel").innerHTML = '<div class="empty-state">Error fetching data.</div>';
     document.getElementById("overlay-panel").innerHTML = '<div class="empty-state">Error fetching data.</div>';
     document.getElementById("overlay-strip").innerHTML = '<span class="overlay-chip">Server error</span>';
+    document.getElementById("forward-test-health-panel").innerHTML = '<div class="empty-state">Forward-test health unavailable right now.</div>';
     document.getElementById("alerts-panel").innerHTML = createCard("Error", [message || "Server error"], "sell", "error");
+    document.getElementById("forward-test-panel").innerHTML = createCard("Error", [message || "Server error"], "sell", "error");
+    document.getElementById("strategy-lab-panel").innerHTML = createCard("Error", [message || "Server error"], "sell", "error");
+    document.getElementById("lifecycle-panel").innerHTML = createCard("Error", [message || "Server error"], "sell", "error");
     document.getElementById("news-panel").innerHTML = createCard("Error", [message || "Server error"], "sell", "error");
+    document.getElementById("broker-drafts-panel").innerHTML = createCard("Error", [message || "Server error"], "sell", "error");
+    document.getElementById("execution-control-panel").innerHTML = createCard("Error", [message || "Server error"], "sell", "error");
+    document.getElementById("execution-scorecards-panel").innerHTML = createCard("Error", [message || "Server error"], "sell", "error");
     document.getElementById("digital-twin-panel").innerHTML = createCard("Error", [message || "Server error"], "sell", "error");
     document.getElementById("fractal-panel").innerHTML = createCard("Error", [message || "Server error"], "sell", "error");
 }
 
 function renderBias(payload) {
     const finalBias = payload.final_bias || "NEUTRAL";
+    const lifecycleView = getLifecycleView(payload);
     const finalBiasElement = document.getElementById("final-bias");
     finalBiasElement.textContent = finalBias;
     finalBiasElement.className = `final-bias ${String(finalBias).toLowerCase()}`;
     document.getElementById("htf-bias").textContent = payload.daily_bias || "-";
     document.getElementById("news-bias").textContent = payload.h1_bias || "-";
-    const lifecycle = payload.lifecycle ? ` | ${payload.lifecycle}` : "";
-    document.getElementById("technical-bias").textContent = `${payload.status || "-"}${lifecycle}`;
+    const technicalBiasElement = document.getElementById("technical-bias");
+    technicalBiasElement.textContent = lifecycleView.label;
+    technicalBiasElement.className = `stage-value ${lifecycleView.pillClass || "stage-forming"}`;
     document.getElementById("confidence").textContent = payload.confidence || "LOW";
     document.getElementById("live-price-badge").textContent = `Price: ${formatNumber(payload.latest_price)}`;
 }
 
 function renderSetup(payload) {
     const container = document.getElementById("setup-panel");
+    const lifecycleView = getLifecycleView(payload);
     if (payload.status === "ERROR") {
         container.innerHTML = createCard("Error fetching data", [payload.message || "Server error"], "sell", "error");
         renderSetupMap(payload, "ERROR");
+        renderLifecyclePanel(payload);
         renderChecklist(payload);
         return;
     }
@@ -247,7 +359,7 @@ function renderSetup(payload) {
             "No valid setup available",
             [
                 payload.message || "System running, no setups",
-                `Lifecycle: ${payload.lifecycle || "-"}`,
+                `Lifecycle: ${lifecycleView.label}`,
                 payload.stalker ? `Stalker: ${payload.stalker.state} (${payload.stalker.score})` : "",
                 `Missing: ${humanizeReasons(payload.missing || []).join(" | ") || "None"}`,
                 `Why: ${(payload.analysis_context?.news?.news_lock?.locked ? "News lock active" : "Waiting for full confluence")}`,
@@ -256,6 +368,7 @@ function renderSetup(payload) {
             "no trade",
         );
         renderSetupMap(payload, "NO_TRADE");
+        renderLifecyclePanel(payload);
         renderChecklist(payload);
         return;
     }
@@ -270,7 +383,7 @@ function renderSetup(payload) {
             `${(payload.strategies || []).join(" + ") || "Strategy"} - Wait For Confirmation`,
             [
                 `Bias: ${payload.bias || "-"}`,
-                `Lifecycle: ${payload.lifecycle || "-"}`,
+                `Lifecycle: ${lifecycleView.label}`,
                 `Session: ${session}`,
                 `Regime: ${regime}`,
                 `Plan Zone: ${formatNumber(planZone.start_price)} -> ${formatNumber(planZone.end_price)}`,
@@ -286,6 +399,7 @@ function renderSetup(payload) {
             "wait confirmation",
         );
         renderSetupMap(payload, "WAIT_CONFIRMATION");
+        renderLifecyclePanel(payload);
         renderChecklist(payload);
         return;
     }
@@ -297,7 +411,7 @@ function renderSetup(payload) {
         `${(payload.strategies || []).join(" + ") || "Strategy"}`,
         [
             `Bias: ${payload.bias}`,
-            `Lifecycle: ${payload.lifecycle || "-"}`,
+            `Lifecycle: ${lifecycleView.label}`,
             `Session: ${session}`,
             `Regime: ${regime}`,
             `Entry: ${formatNumber(payload.entry)}`,
@@ -312,7 +426,53 @@ function renderSetup(payload) {
         payload.status,
     );
     renderSetupMap(payload, "VALID_TRADE");
+    renderLifecyclePanel(payload);
     renderChecklist(payload);
+}
+
+function renderLifecyclePanel(payload) {
+    const container = document.getElementById("lifecycle-panel");
+    if (!container) return;
+    const lifecycleView = getLifecycleView(payload);
+    const rawLifecycle = payload?.lifecycle || "-";
+    const rawStatus = payload?.status || "-";
+    const missing = humanizeReasons(payload?.missing || []).join(" | ") || "None";
+
+    container.innerHTML = [
+        createCard(
+            lifecycleView.label,
+            [
+                `Dashboard status: ${rawStatus}`,
+                `Raw lifecycle: ${rawLifecycle}`,
+                `Stage color: ${lifecycleView.label}`,
+                `What it means: ${lifecycleView.note}`,
+                `What next: ${lifecycleView.next}`,
+            ],
+            lifecycleView.tone,
+            "stage",
+        ),
+        createCard(
+            "Stage Guide",
+            [
+                "ZONE WATCH: valid zone exists but price has not arrived yet.",
+                "ENTRY ZONE REACHED: price is at the area, but confirmation may still be missing.",
+                "WAIT CONFIRMATION: lower-timeframe shift/retest is still required.",
+                "VALID SETUP: rules are met and the trade plan is usable now.",
+                "TRADE OPEN: setup is already active in tracked state.",
+                "WIN / LOSS: trade has completed.",
+            ],
+            "info",
+            "guide",
+        ),
+        createCard(
+            "Still Missing",
+            [
+                missing,
+            ],
+            payload?.status === "NO TRADE" || payload?.status === "WAIT_CONFIRMATION" ? "neutral" : "info",
+            "checks",
+        ),
+    ].join("");
 }
 
 function renderChecklist(payload) {
@@ -469,6 +629,7 @@ function renderAlerts(alerts) {
 function renderJournal(payload) {
     const container = document.getElementById("journal-panel");
     const entries = payload?.entries || [];
+    const filters = payload?.filters || {};
     if (!entries?.length) {
         container.innerHTML = '<div class="empty-state">No journal entries yet.</div>';
         return;
@@ -489,6 +650,7 @@ function renderJournal(payload) {
             `Closed: ${summary.closed ?? 0}`,
             `Wins: ${summary.wins ?? 0} | Losses: ${summary.losses ?? 0}`,
             `Win rate: ${summary.win_rate != null ? `${summary.win_rate}%` : "-"}`,
+            `Filters: Pair ${filters.pair || "All"} | Strategy ${filters.strategy || "All"} | Result ${filters.result || "All"}`,
         ],
         "info",
         "summary",
@@ -516,6 +678,319 @@ function renderJournal(payload) {
     container.innerHTML = sections.join("");
 }
 
+function renderForwardTest(payload) {
+    const container = document.getElementById("forward-test-panel");
+    const entries = payload?.entries || [];
+    const summary = payload?.summary || {};
+    const period = summary.period || {};
+    const totalR = Number(summary.total_r || 0);
+    const tagClass = totalR > 0 ? "buy" : totalR < 0 ? "sell" : "info";
+    const tagLabel = summary.week_only ? "this week" : "forward test";
+
+    if (!entries.length && !summary.count) {
+        container.innerHTML = createCard(
+            "No forward-test trades yet",
+            [
+                "No forward-test-tagged trades were found for the current week.",
+                "Once this week starts logging tagged trades, they will appear here separately from the older journal history.",
+            ],
+            "neutral",
+            "forward test",
+        );
+        return;
+    }
+
+    const sections = [
+        createCard(
+            summary.name || "Forward Test Week",
+            [
+                `Entries: ${summary.count ?? 0} | Closed: ${summary.closed ?? 0} | Open: ${summary.open ?? 0}`,
+                `Wins: ${summary.wins ?? 0} | Losses: ${summary.losses ?? 0} | Win rate: ${summary.win_rate != null ? `${summary.win_rate}%` : "-"}`,
+                `Total R: ${formatNumber(summary.total_r, 2)} | Avg R: ${formatNumber(summary.average_r, 2)}`,
+                `Triggered open: ${summary.triggered_open ?? 0} | Pending open: ${summary.pending_open ?? 0}`,
+                period.week_start ? `Week: ${String(period.week_start).slice(0, 10)} to ${String(period.week_end).slice(0, 10)}` : "Period: Forward-test tagged trades",
+            ],
+            tagClass,
+            tagLabel,
+        ),
+    ];
+
+    (summary.strategies || []).forEach((item) => {
+        sections.push(
+            createCard(
+                item.name || "Strategy",
+                [
+                    `Forward-test entries: ${item.count ?? 0}`,
+                ],
+                "info",
+                "strategy",
+            )
+        );
+    });
+
+    entries.slice(0, 8).forEach((entry) => {
+        const status = String(entry.status || entry.result || "entry").toUpperCase();
+        const entryTagClass = status.includes("WIN") ? "buy" : status.includes("LOSS") ? "sell" : "neutral";
+        sections.push(
+            createCard(
+                `${entry.symbol} ${entry.strategy || ""}`.trim(),
+                [
+                    `Status: ${status}`,
+                    `Entry: ${formatNumber(entry.entry)} | SL: ${formatNumber(entry.stop_loss)} | TP: ${formatNumber(entry.take_profit)}`,
+                    `Triggered: ${entry.entry_triggered ? "YES" : "NO"} | R: ${entry.rr_achieved != null ? entry.rr_achieved : "-"}`,
+                    `Time: ${String(entry.closed_at || entry.timestamp || "").replace("T", " ").slice(0, 16) || "-"}`,
+                    entry.forward_test_name ? `Run: ${entry.forward_test_name}` : "",
+                ].filter(Boolean),
+                entryTagClass,
+                status,
+            )
+        );
+    });
+
+    container.innerHTML = sections.join("");
+}
+
+function renderForwardTestHealth(statusPayload, forwardTestPayload) {
+    const container = document.getElementById("forward-test-health-panel");
+    const runtime = statusPayload?.forward_test || {};
+    const scanner = statusPayload?.scanner_health || {};
+    const summary = forwardTestPayload?.summary || {};
+    const totalR = Number(summary.total_r || 0);
+    const refreshedAt = String(statusPayload?.timestamp || scanner?.last_progress_at || "").trim();
+    const scannerState = String(scanner.status || "unknown").toLowerCase();
+    const scannerIsBad = ["stalled", "stale", "error"].includes(scannerState);
+    const hasForwardTestEntries = Number(summary.count || 0) > 0;
+    const modeMismatch = !runtime.enabled && hasForwardTestEntries;
+    const guardrailIssues = [];
+
+    if (scannerIsBad) {
+        guardrailIssues.push(`Scanner health is ${scannerState}.`);
+    }
+    if (modeMismatch) {
+        guardrailIssues.push("Forward-test mode is OFF while forward-test-tagged trades still exist this week.");
+    }
+
+    const modeClass = modeMismatch ? "sell" : runtime.enabled ? "buy" : "neutral";
+    const totalRClass = totalR > 0 ? "buy" : totalR < 0 ? "sell" : "info";
+    const scannerClass = scanner.status === "healthy"
+        ? "buy"
+        : (scanner.status === "stalled" || scanner.status === "stale" || scanner.status === "error")
+            ? "sell"
+            : "info";
+    const guardrailClass = guardrailIssues.length ? "sell" : "buy";
+    const guardrailValue = guardrailIssues.length ? "ATTENTION" : "CLEAR";
+    const guardrailDetail = guardrailIssues.length
+        ? guardrailIssues.join(" ")
+        : "Forward-test mode and scanner health look internally consistent.";
+
+    const cards = [
+        createHealthCard(
+            "Mode",
+            runtime.mode_label || "OFF",
+            modeMismatch
+                ? `${runtime.name || "Forward Test Week"} | mismatch detected`
+                : (runtime.name || "Forward Test Week"),
+            modeClass
+        ),
+        createHealthCard("This Week", String(summary.count ?? 0), `${summary.wins ?? 0}W / ${summary.losses ?? 0}L`, "info"),
+        createHealthCard("Open", String(summary.open ?? 0), `${summary.triggered_open ?? 0} triggered / ${summary.pending_open ?? 0} pending`, "info"),
+        createHealthCard("Closed", String(summary.closed ?? 0), `Win rate ${summary.win_rate != null ? `${summary.win_rate}%` : "-"}`, "info"),
+        createHealthCard("Total R", formatNumber(summary.total_r, 2), `Avg ${formatNumber(summary.average_r, 2)}R`, totalRClass),
+        createHealthCard("Scanner", String(scanner.status || "unknown").toUpperCase(), `${scanner.completed_symbols || 0}/${scanner.total_symbols || 0} symbols`, scannerClass),
+        createHealthCard("Updated", formatTimestampShort(refreshedAt), scanner.last_progress_at ? `Last scan progress ${formatTimestampShort(scanner.last_progress_at)}` : "Using latest status heartbeat", "info"),
+        createHealthCard("Guardrail", guardrailValue, guardrailDetail, guardrailClass),
+    ];
+
+    container.innerHTML = cards.join("");
+}
+
+function renderForwardTestBanner(statusPayload, forwardTestPayload) {
+    const banner = document.getElementById("forward-test-banner");
+    const runtime = statusPayload?.forward_test || {};
+    const summary = forwardTestPayload?.summary || {};
+    const enabled = Boolean(runtime.enabled);
+    const name = String(runtime.name || "Forward Test Week").trim();
+    const count = Number(summary.count || 0);
+    const closed = Number(summary.closed || 0);
+    const wins = Number(summary.wins || 0);
+    const losses = Number(summary.losses || 0);
+    const totalR = Number(summary.total_r || 0);
+
+    if (enabled) {
+        banner.className = "forward-test-banner forward-test-banner-active";
+        banner.innerHTML = `<strong>Forward Test Active</strong><span>${name} | ${count} logged | ${closed} closed | ${wins}W / ${losses}L | ${formatNumber(totalR, 2)}R</span>`;
+        return;
+    }
+
+    banner.className = "forward-test-banner forward-test-banner-off";
+    banner.innerHTML = `<strong>Forward Test Off</strong><span>${name} | Dashboard is not currently running in forward-test mode.</span>`;
+}
+
+function strategyPromotionTone(status) {
+    const normalized = String(status || "").toUpperCase();
+    if (normalized === "PROMOTED") return "buy";
+    if (normalized === "REVIEW") return "sell";
+    return "neutral";
+}
+
+function createHealthCard(label, value, detail, tone = "info") {
+    return `
+        <article class="health-card">
+            <span class="tag ${tone}">${label}</span>
+            <strong>${value ?? "-"}</strong>
+            <p>${detail || "-"}</p>
+        </article>
+    `;
+}
+
+function formatTimestampShort(value) {
+    const raw = String(value || "").trim();
+    if (!raw) return "-";
+    const parsed = new Date(raw);
+    if (Number.isNaN(parsed.getTime())) {
+        return raw.replace("T", " ").slice(0, 16) || raw;
+    }
+    return parsed.toLocaleString([], {
+        year: "numeric",
+        month: "short",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+    });
+}
+
+function renderStrategyLab(payload) {
+    const container = document.getElementById("strategy-lab-panel");
+    const summary = payload?.summary || {};
+    const strategies = payload?.strategies || [];
+    const promotionTable = payload?.promotion_table || [];
+    const allTimeSummary = summary.all_time || {};
+    const forwardSummary = summary.forward_test_week || {};
+    const highlights = summary.highlights || {};
+
+    if (!strategies.length) {
+        container.innerHTML = '<div class="empty-state">Strategy lab is waiting for journaled strategy data.</div>';
+        return;
+    }
+
+    const cards = [];
+
+    if (highlights.best_all_time || highlights.best_forward_test_week || highlights.most_blocked || highlights.top_failure_reason_week) {
+        cards.push(`
+            <div class="strategy-lab-highlights">
+                ${createHealthCard(
+                    "Best All-Time",
+                    highlights.best_all_time?.name || "No leader yet",
+                    highlights.best_all_time
+                        ? `${highlights.best_all_time.valid_setups} valid | ${highlights.best_all_time.closed_trades} closed | ${formatNumber(highlights.best_all_time.total_r, 2)}R`
+                        : "No strategy has enough valid all-time data yet.",
+                    highlights.best_all_time ? "buy" : "neutral"
+                )}
+                ${createHealthCard(
+                    "Best This Week",
+                    highlights.best_forward_test_week?.name || "No leader yet",
+                    highlights.best_forward_test_week
+                        ? `${highlights.best_forward_test_week.valid_setups} valid | ${highlights.best_forward_test_week.closed_trades} closed | ${formatNumber(highlights.best_forward_test_week.total_r, 2)}R`
+                        : "No forward-test-week winner yet.",
+                    highlights.best_forward_test_week ? "buy" : "neutral"
+                )}
+                ${createHealthCard(
+                    "Most Blocked",
+                    highlights.most_blocked?.name || "No leader yet",
+                    highlights.most_blocked
+                        ? `${highlights.most_blocked.blocked_count} blocked | ${highlights.most_blocked.failure_reason || "-"}`
+                        : "No blocked strategy signal yet.",
+                    highlights.most_blocked ? "sell" : "neutral"
+                )}
+                ${createHealthCard(
+                    "Top Failure This Week",
+                    highlights.top_failure_reason_week?.reason || "No failure yet",
+                    highlights.top_failure_reason_week
+                        ? `${highlights.top_failure_reason_week.count || 0} occurrence(s)`
+                        : "No forward-test-week failure logged yet.",
+                    (highlights.top_failure_reason_week?.count || 0) > 0 ? "sell" : "neutral"
+                )}
+            </div>
+        `);
+    }
+
+    cards.push(
+        createCard(
+            "Strategy Lab Summary",
+            [
+                `Strategies tracked: ${summary.strategies_tracked ?? strategies.length}`,
+                `All-time: ${allTimeSummary.total_setups ?? 0} setups | ${allTimeSummary.valid_setups ?? 0} valid | ${allTimeSummary.activated_entries ?? 0} triggered`,
+                `All-time closed: ${allTimeSummary.closed_trades ?? 0} | ${allTimeSummary.wins ?? 0}W / ${allTimeSummary.losses ?? 0}L | ${allTimeSummary.win_rate != null ? `${allTimeSummary.win_rate}%` : "-"} | ${formatNumber(allTimeSummary.total_r, 2)}R`,
+                `Forward-test week: ${forwardSummary.total_setups ?? 0} setups | ${forwardSummary.valid_setups ?? 0} valid | ${forwardSummary.activated_entries ?? 0} triggered`,
+                `Forward-test closed: ${forwardSummary.closed_trades ?? 0} | ${forwardSummary.wins ?? 0}W / ${forwardSummary.losses ?? 0}L | ${forwardSummary.win_rate != null ? `${forwardSummary.win_rate}%` : "-"} | ${formatNumber(forwardSummary.total_r, 2)}R`,
+                `Promotion basis: ${summary.promotion_basis === "forward_test_week" ? "Forward-test week only" : (summary.promotion_basis || "-")} | Tagged entries: ${summary.forward_test_week_entries ?? 0}`,
+            ],
+            "info",
+            "lab",
+        )
+    );
+
+    strategies.forEach((item) => {
+        const allTime = item.all_time || {};
+        const forwardWeek = item.forward_test_week || {};
+        cards.push(
+            createCard(
+                item.name || "Strategy",
+                [
+                    `All-time: ${allTime.total_setups ?? 0} setups | ${allTime.valid_setups ?? 0} valid | ${allTime.activated_entries ?? 0} triggered`,
+                    `All-time closed: ${allTime.closed_trades ?? 0} | ${allTime.wins ?? 0}W / ${allTime.losses ?? 0}L | ${allTime.win_rate != null ? `${allTime.win_rate}%` : "-"} | ${formatNumber(allTime.total_r, 2)}R | Avg ${formatNumber(allTime.average_r, 2)}R`,
+                    `All-time conversion: ${allTime.draft_to_trigger_conversion != null ? `${allTime.draft_to_trigger_conversion}%` : "-"} draft -> trigger | ${allTime.trigger_to_win_conversion != null ? `${allTime.trigger_to_win_conversion}%` : "-"} trigger -> win`,
+                    `Forward-test week: ${forwardWeek.total_setups ?? 0} setups | ${forwardWeek.valid_setups ?? 0} valid | ${forwardWeek.activated_entries ?? 0} triggered`,
+                    `Forward-test closed: ${forwardWeek.closed_trades ?? 0} | ${forwardWeek.wins ?? 0}W / ${forwardWeek.losses ?? 0}L | ${forwardWeek.win_rate != null ? `${forwardWeek.win_rate}%` : "-"} | ${formatNumber(forwardWeek.total_r, 2)}R | Avg ${formatNumber(forwardWeek.average_r, 2)}R`,
+                    `Forward conversion: ${forwardWeek.draft_to_trigger_conversion != null ? `${forwardWeek.draft_to_trigger_conversion}%` : "-"} draft -> trigger | ${forwardWeek.trigger_to_win_conversion != null ? `${forwardWeek.trigger_to_win_conversion}%` : "-"} trigger -> win`,
+                    `Most common failure: ${item.most_common_failure_reason || allTime.most_common_failure_reason || "-"}`,
+                    `Promotion: ${item.promotion_status || "-"}${item.promotion_reasons?.length ? ` | Why: ${item.promotion_reasons.join(" | ")}` : ""}`,
+                ],
+                strategyPromotionTone(item.promotion_status),
+                item.promotion_status || "strategy",
+            )
+        );
+    });
+
+    if (promotionTable.length) {
+        cards.push(`
+            <div class="strategy-lab-table-wrap">
+                <div class="journal-day">Strategy Promotion Table</div>
+                <table class="strategy-table">
+                    <thead>
+                        <tr>
+                            <th>Strategy</th>
+                            <th>Status</th>
+                            <th>Valid</th>
+                            <th>Triggered</th>
+                            <th>Win Rate</th>
+                            <th>Total R</th>
+                            <th>Avg R</th>
+                            <th>Why</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${promotionTable.map((item) => `
+                            <tr>
+                                <td>${item.strategy || "-"}</td>
+                                <td>${item.promotion_status || "-"}</td>
+                                <td>${item.forward_test_week?.valid_setups ?? 0}</td>
+                                <td>${item.forward_test_week?.activated_entries ?? 0}</td>
+                                <td>${item.forward_test_week?.win_rate != null ? `${item.forward_test_week.win_rate}%` : "-"}</td>
+                                <td>${formatNumber(item.forward_test_week?.total_r, 2)}</td>
+                                <td>${formatNumber(item.forward_test_week?.average_r, 2)}</td>
+                                <td>${(item.promotion_reasons || []).join(" | ") || "Meets current promotion gate"}</td>
+                            </tr>
+                        `).join("")}
+                    </tbody>
+                </table>
+            </div>
+        `);
+    }
+
+    container.innerHTML = cards.join("");
+}
+
 function renderPerformance(performance) {
     const container = document.getElementById("performance-panel");
     if (!performance || Object.keys(performance).length === 0) {
@@ -528,6 +1003,8 @@ function renderPerformance(performance) {
     const shadow = performance.shadow_tracking || {};
     const scan = performance.scan_diagnostics || {};
     const scannerHealth = performance.scanner_health || {};
+    const executionAgent = performance.execution_agent || {};
+    const promotionGate = executionAgent.promotion_gate || {};
     const cards = [
         createCard("Core Stats", [
             `Win rate: ${formatNumber(performance.win_rate, 2)}%`,
@@ -595,6 +1072,13 @@ function renderPerformance(performance) {
         `Rejected now: ${(scan.rejected_candidates || []).slice(0, 3).map((item) => `${item.symbol} (${(item.missing || []).join("/") || item.message || item.status || "no trade"})`).join(" | ") || "None"}`,
         scannerHealth.reasons?.length ? `Why: ${scannerHealth.reasons.join(" | ")}` : "",
     ], scannerHealth.status === "stalled" || scannerHealth.status === "stale" ? "sell" : (scan.selected_count || 0) > 0 ? "buy" : "neutral", "scan"));
+    cards.push(createCard("Execution Agent", [
+        `Watcher alerts to Telegram: ${executionAgent.telegram_watcher_alerts ? "ON" : "OFF"}`,
+        `Broker drafts: ${executionAgent.broker_draft_count || 0}`,
+        `Forward-test closed: ${executionAgent.forward_test_summary?.closed || 0} | Open: ${executionAgent.forward_test_summary?.open || 0}`,
+        `Promotion gate: ${promotionGate.status || "-"}`,
+        `Gate reasons: ${(promotionGate.reasons || []).join(" | ") || "None"}`,
+    ], promotionGate.status === "READY_FOR_SHADOW_EXECUTION" ? "buy" : "neutral", "executor"));
 
     (validation.top_symbols || []).slice(0, 3).forEach((stats) => {
         cards.push(createCard(`${stats.symbol} Validated`, [
@@ -620,6 +1104,136 @@ function renderPerformance(performance) {
             `Why: ${(review.reasons || []).join(" | ") || "Meets promotion gate"}`,
         ], review.ready_for_live ? "buy" : "neutral", "shadow-review"));
     });
+    container.innerHTML = cards.join("");
+}
+
+function renderBrokerDrafts(payload) {
+    const container = document.getElementById("broker-drafts-panel");
+    const entries = payload?.entries || [];
+    const summary = payload?.summary || {};
+    if (!entries.length) {
+        container.innerHTML = '<div class="empty-state">No broker drafts yet. When a valid setup appears, the draft order ticket will show up here.</div>';
+        return;
+    }
+
+    const cards = [
+        createCard(
+            "Draft Summary",
+            [
+                `Drafts: ${summary.count ?? entries.length}`,
+                `Active: ${summary.active ?? 0} | Closed: ${summary.closed ?? 0}`,
+                `Wins: ${summary.wins ?? 0} | Losses: ${summary.losses ?? 0}`,
+            ],
+            "info",
+            "summary",
+        ),
+    ];
+
+    cards.push(...entries.slice(0, 8).map((entry) =>
+        createCard(
+            `${entry.symbol} ${entry.bias} Draft`,
+            [
+                `Strategy: ${entry.strategy || "-"}`,
+                `Order Type: ${entry.order_type || "-"}`,
+                `Entry: ${formatNumber(entry.entry)} | SL: ${formatNumber(entry.stop_loss)} | TP: ${formatNumber(entry.take_profit)}`,
+                `Draft Status: ${entry.draft_status || entry.status || "-"}`,
+                `Risk: $${formatNumber(entry.risk_amount, 2)} | Size: ${entry.size_units ?? "-"}`,
+                `Grade: ${entry.setup_grade || "-"} | RR: ${entry.risk_reward_ratio != null ? `1:${entry.risk_reward_ratio}` : "-"}`,
+                `Execution Ready: ${entry.execution_ready ? "YES" : "NO"}`,
+                `Checklist: ${((entry.execution_checklist || {}).items || []).filter((item) => item.ok).length}/${((entry.execution_checklist || {}).items || []).length} passed`,
+                entry.rr_achieved != null ? `Outcome R: ${entry.rr_achieved}` : "",
+                `Created: ${formatTimestampShort(entry.created_at)}`,
+                entry.forward_test_name ? `Run: ${entry.forward_test_name}` : "",
+            ].filter(Boolean),
+            String(entry.bias || "").toUpperCase() === "BUY" ? "buy" : "sell",
+            "draft",
+        )
+    ));
+
+    container.innerHTML = cards.join("");
+}
+
+function renderExecutionControl(payload) {
+    const container = document.getElementById("execution-control-panel");
+    if (!payload || Object.keys(payload).length === 0) {
+        container.innerHTML = '<div class="empty-state">Execution controls unavailable right now.</div>';
+        return;
+    }
+    const blocked = payload.hard_block_reasons || [];
+    container.innerHTML = [
+        createCard(
+            "Execution Mode",
+            [
+                `Live execution: ${payload.enabled ? "ENABLED" : "DISABLED"}`,
+                `Draft only: ${payload.draft_only ? "YES" : "NO"}`,
+                `Kill switch: ${payload.kill_switch ? "ON" : "OFF"}`,
+                `Strategy freeze: ${payload.strategy_freeze ? "ON" : "OFF"}`,
+                `Layers: Watcher ${payload.layers?.watcher || "-"} | Executor ${payload.layers?.executor || "-"} | Broker ${payload.layers?.broker || "-"}`,
+                `Open positions: ${payload.current_open_positions ?? 0}/${payload.max_open_positions ?? "-"}`,
+                `Daily closed R: ${payload.daily_closed_r ?? 0} | Max loss: -${payload.max_daily_loss_r ?? "-"}`,
+                `Allowlist: ${(payload.allowed_symbols || []).join(", ") || "OPEN"}`,
+                `Blocked by: ${blocked.join(" | ") || "None"}`,
+            ],
+            blocked.length ? "sell" : "info",
+            "control",
+        ),
+    ].join("");
+}
+
+function renderExecutionScorecards(payload) {
+    const container = document.getElementById("execution-scorecards-panel");
+    const daily = payload?.daily || [];
+    const promotionHistory = payload?.promotion_history || [];
+    const summary = payload?.summary || {};
+    if (!daily.length && !promotionHistory.length) {
+        container.innerHTML = '<div class="empty-state">Execution scorecards unavailable right now.</div>';
+        return;
+    }
+
+    const cards = [
+        createCard(
+            summary.name || "Forward-Test Summary",
+            [
+                `Entries: ${summary.count ?? 0} | Closed: ${summary.closed ?? 0} | Open: ${summary.open ?? 0}`,
+                `Wins: ${summary.wins ?? 0} | Losses: ${summary.losses ?? 0} | Win rate: ${summary.win_rate != null ? `${summary.win_rate}%` : "-"}`,
+                `Total R: ${summary.total_r ?? 0} | Avg R: ${summary.average_r ?? 0}`,
+            ],
+            "info",
+            "summary",
+        ),
+    ];
+
+    daily.slice(-5).forEach((item) => {
+        cards.push(
+            createCard(
+                `Daily ${item.date}`,
+                [
+                    `Entries: ${item.entries} | Triggered: ${item.triggered} | Open: ${item.open}`,
+                    `Closed: ${item.closed} | Wins: ${item.wins} | Losses: ${item.losses}`,
+                    `Win rate: ${item.win_rate}% | Total R: ${item.total_r} | Avg R: ${item.average_r}`,
+                ],
+                item.total_r > 0 ? "buy" : item.total_r < 0 ? "sell" : "info",
+                "day",
+            )
+        );
+    });
+
+    promotionHistory.slice(-5).forEach((item) => {
+        cards.push(
+            createCard(
+                `Promotion ${item.date}`,
+                [
+                    `Status: ${item.status}`,
+                    `Closed: ${item.closed} | Win rate: ${item.win_rate}%`,
+                    `Avg R: ${item.average_r} | Total R: ${item.total_r}`,
+                    `Reasons: ${(item.reasons || []).join(" | ") || "Ready for shadow execution"}`,
+                ],
+                item.status === "READY_FOR_SHADOW_EXECUTION" ? "buy" : "neutral",
+                "gate",
+            )
+        );
+    });
+
     container.innerHTML = cards.join("");
 }
 
@@ -775,6 +1389,7 @@ function renderWatchlist(payload) {
         const isActive = item.symbol === state.symbol;
         const entryLabel = item.entry != null ? formatNumber(item.entry) : "-";
         const rrLabel = item.risk_reward_ratio != null ? `1:${item.risk_reward_ratio}` : "-";
+        const lifecycleView = getLifecycleView(item);
         return `
             <article class="card watchlist-item ${isActive ? "active" : ""}" data-symbol="${item.symbol}" data-source="${item.source}">
                 <div class="watchlist-head">
@@ -786,7 +1401,7 @@ function renderWatchlist(payload) {
                     <span class="watchlist-price">Entry: ${entryLabel}</span>
                 </div>
                 <div class="watchlist-sub">Daily: ${item.daily_bias} | H1: ${item.h1_bias}</div>
-                <div class="watchlist-sub">Lifecycle: ${item.lifecycle || "-"} | Tier: ${item.tier || "-"} | Rank: ${item.rank || "-"}</div>
+                <div class="watchlist-sub">Stage: ${renderLifecyclePill(lifecycleView)} | Tier: ${item.tier || "-"} | Rank: ${item.rank || "-"}</div>
                 <div class="watchlist-sub">Stalker: ${item.stalker?.state || "-"} | Score: ${item.stalker?.score ?? "-"}</div>
                 <div class="watchlist-sub">Score: ${item.ranking_score ?? "-"}</div>
                 <div class="watchlist-sub">Confidence: ${item.confidence} | RR: ${rrLabel} | Source: ${item.source}</div>
@@ -826,6 +1441,7 @@ function renderTopOpportunities(payload) {
     }
 
     container.innerHTML = items.map((item) => {
+        const lifecycleView = getLifecycleView(item);
         const failedChecks = (item.analysis_context?.checklist || [])
             .filter((check) => !check.ok)
             .map((check) => check.name);
@@ -838,7 +1454,7 @@ function renderTopOpportunities(payload) {
                 <span class="tag ${item.status === "VALID_TRADE" ? "buy" : "info"}">${item.tier || item.stalker?.state || item.status}</span>
                 <h3>${item.rank || "-"} • ${item.symbol}</h3>
                 <p>Bias: ${item.bias || item.daily_bias} | Daily: ${item.daily_bias} | H1: ${item.h1_bias}</p>
-                <p>Lifecycle: ${item.lifecycle || "-"} | Score: ${item.ranking_score ?? "-"} | RR: ${item.risk_reward_ratio != null ? `1:${item.risk_reward_ratio}` : "-"}</p>
+                <p>Stage: ${renderLifecyclePill(lifecycleView)} | Score: ${item.ranking_score ?? "-"} | RR: ${item.risk_reward_ratio != null ? `1:${item.risk_reward_ratio}` : "-"}</p>
                 <p>Why now: ${explanation || "Market is one of the stronger candidates right now."}</p>
             </article>
         `;
@@ -863,6 +1479,7 @@ function renderLiveSetups(payload) {
     }
 
     container.innerHTML = items.map((item) => {
+        const lifecycleView = getLifecycleView(item);
         const context = item.analysis_context || {};
         const ob = context.order_block?.zone;
         const fvg = context.fvg?.zone;
@@ -872,7 +1489,7 @@ function renderLiveSetups(payload) {
                 <span class="tag ${String(item.bias || "").toLowerCase() === "buy" ? "buy" : "sell"}">${item.bias || "SETUP"}</span>
                 <h3>${item.symbol}</h3>
                 <p>Entry: ${formatNumber(item.entry)} | SL: ${formatNumber(item.sl)} | TP: ${formatNumber(item.tp)}</p>
-                <p>Daily: ${item.daily_bias} | H1: ${item.h1_bias} | Lifecycle: ${item.lifecycle || "-"} </p>
+                <p>Daily: ${item.daily_bias} | H1: ${item.h1_bias} | Stage: ${renderLifecyclePill(lifecycleView)}</p>
                 <p>Stalker: ${item.stalker?.state || "-"} | Score: ${item.stalker?.score ?? "-"}</p>
                 <p>Confidence: ${item.confidence} | RR: ${item.risk_reward_ratio != null ? `1:${item.risk_reward_ratio}` : "-"} | Tier: ${item.tier || "-"}</p>
                 <p>Rank: ${item.rank || "-"} | Score: ${item.ranking_score ?? "-"}</p>
@@ -990,17 +1607,20 @@ function renderScanReport(payload) {
         return;
     }
 
-    container.innerHTML = items.slice(0, 8).map((item) => `
+    container.innerHTML = items.slice(0, 8).map((item) => {
+        const lifecycleView = getLifecycleView(item);
+        return `
         <article class="card watchlist-item" data-symbol="${item.symbol}" data-source="${item.source}">
             <span class="tag ${item.status === "VALID_TRADE" ? "buy" : "neutral"}">${item.status === "VALID_TRADE" ? "ready" : (item.stalker?.state || "scan")}</span>
             <h3>${item.symbol}</h3>
             <p>Daily: ${item.daily_bias} | H1: ${item.h1_bias}</p>
-            <p>Lifecycle: ${item.lifecycle || "-"} | Tier: ${item.tier || "-"}</p>
+            <p>Stage: ${renderLifecyclePill(lifecycleView)} | Tier: ${item.tier || "-"}</p>
             <p>RR: ${item.risk_reward_ratio != null ? `1:${item.risk_reward_ratio}` : "-"} | Confidence: ${item.confidence || "-"}</p>
             <p>Missing: ${(item.missing || []).join(", ") || "None"}</p>
             <p>Stalker: ${item.stalker?.state || "-"} | Score: ${item.stalker?.score ?? "-"}</p>
         </article>
-    `).join("");
+    `;
+    }).join("");
 
     container.querySelectorAll(".watchlist-item").forEach((element) => {
         element.addEventListener("click", () => {
@@ -1163,6 +1783,7 @@ async function fetchNewsData() {
 async function fetchJournalData() {
     const params = new URLSearchParams({ limit: "50" });
     if (state.journalFilters.pair) params.set("pair", state.journalFilters.pair);
+    if (state.journalFilters.strategy) params.set("strategy", state.journalFilters.strategy);
     if (state.journalFilters.result) params.set("result", state.journalFilters.result);
     if (state.journalFilters.quality) params.set("quality", state.journalFilters.quality);
     if (state.journalFilters.month) params.set("month", state.journalFilters.month);
@@ -1172,6 +1793,26 @@ async function fetchJournalData() {
         return rawText ? JSON.parse(rawText) : { entries: [], summary: {} };
     } catch {
         return { entries: [], summary: {} };
+    }
+}
+
+async function fetchForwardTestData() {
+    const response = await fetch("/forward-test?limit=25&week_only=true");
+    const rawText = await response.text();
+    try {
+        return rawText ? JSON.parse(rawText) : { entries: [], summary: {} };
+    } catch {
+        return { entries: [], summary: {} };
+    }
+}
+
+async function fetchStatusData() {
+    const response = await fetch("/status");
+    const rawText = await response.text();
+    try {
+        return rawText ? JSON.parse(rawText) : {};
+    } catch {
+        return {};
     }
 }
 
@@ -1185,6 +1826,46 @@ async function fetchScanReportData() {
     }
 }
 
+async function fetchBrokerDraftsData() {
+    const response = await fetch("/broker-drafts?limit=25");
+    const rawText = await response.text();
+    try {
+        return rawText ? JSON.parse(rawText) : { entries: [] };
+    } catch {
+        return { entries: [] };
+    }
+}
+
+async function fetchExecutionControlData() {
+    const response = await fetch("/execution-control");
+    const rawText = await response.text();
+    try {
+        return rawText ? JSON.parse(rawText) : {};
+    } catch {
+        return {};
+    }
+}
+
+async function fetchExecutionScorecardsData() {
+    const response = await fetch("/execution-scorecards?days=7");
+    const rawText = await response.text();
+    try {
+        return rawText ? JSON.parse(rawText) : { daily: [], promotion_history: [], summary: {} };
+    } catch {
+        return { daily: [], promotion_history: [], summary: {} };
+    }
+}
+
+async function fetchStrategyLabData() {
+    const response = await fetch("/strategy-lab");
+    const rawText = await response.text();
+    try {
+        return rawText ? JSON.parse(rawText) : { strategies: [], summary: {}, promotion_table: [] };
+    } catch {
+        return { strategies: [], summary: {}, promotion_table: [] };
+    }
+}
+
 function syncStateFromInputs() {
     const requestedSymbol = document.getElementById("symbol-input").value.trim().toUpperCase() || "EURUSD";
     state.symbol = APPROVED_SYMBOLS.has(requestedSymbol) ? requestedSymbol : "EURUSD";
@@ -1194,6 +1875,7 @@ function syncStateFromInputs() {
     state.tradingViewSymbol = document.getElementById("tv-symbol-input").value.trim() || inferTradingViewSymbol(state.symbol);
     state.journalFilters = {
         pair: document.getElementById("journal-pair-filter").value,
+        strategy: document.getElementById("journal-strategy-filter").value,
         result: document.getElementById("journal-result-filter").value,
         quality: document.getElementById("journal-quality-filter").value,
         month: document.getElementById("journal-month-filter").value,
@@ -1246,6 +1928,36 @@ async function refreshDashboard(forceChart = false) {
                 document.getElementById("performance-panel").innerHTML = '<div class="empty-state">Performance unavailable right now.</div>';
             });
 
+        fetchBrokerDraftsData()
+            .then((brokerDraftsPayload) => {
+                if (requestId !== state.requestId) return;
+                renderBrokerDrafts(brokerDraftsPayload || {});
+            })
+            .catch(() => {
+                if (requestId !== state.requestId) return;
+                document.getElementById("broker-drafts-panel").innerHTML = '<div class="empty-state">Broker drafts unavailable right now.</div>';
+            });
+
+        fetchExecutionControlData()
+            .then((executionControlPayload) => {
+                if (requestId !== state.requestId) return;
+                renderExecutionControl(executionControlPayload || {});
+            })
+            .catch(() => {
+                if (requestId !== state.requestId) return;
+                document.getElementById("execution-control-panel").innerHTML = '<div class="empty-state">Execution controls unavailable right now.</div>';
+            });
+
+        fetchExecutionScorecardsData()
+            .then((executionScorecardsPayload) => {
+                if (requestId !== state.requestId) return;
+                renderExecutionScorecards(executionScorecardsPayload || {});
+            })
+            .catch(() => {
+                if (requestId !== state.requestId) return;
+                document.getElementById("execution-scorecards-panel").innerHTML = '<div class="empty-state">Execution scorecards unavailable right now.</div>';
+            });
+
         fetchDigitalTwinData()
             .then((digitalTwinPayload) => {
                 if (requestId !== state.requestId) return;
@@ -1292,6 +2004,40 @@ async function refreshDashboard(forceChart = false) {
                 document.getElementById("journal-panel").innerHTML = '<div class="empty-state">Journal unavailable right now.</div>';
             });
 
+        fetchForwardTestData()
+            .then((forwardTestPayload) => {
+                if (requestId !== state.requestId) return;
+                renderForwardTest(forwardTestPayload);
+            })
+            .catch(() => {
+                if (requestId !== state.requestId) return;
+                document.getElementById("forward-test-panel").innerHTML = '<div class="empty-state">Forward-test review unavailable right now.</div>';
+            });
+
+        fetchStrategyLabData()
+            .then((strategyLabPayload) => {
+                if (requestId !== state.requestId) return;
+                renderStrategyLab(strategyLabPayload || {});
+            })
+            .catch(() => {
+                if (requestId !== state.requestId) return;
+                document.getElementById("strategy-lab-panel").innerHTML = '<div class="empty-state">Strategy lab unavailable right now.</div>';
+            });
+
+        Promise.all([fetchStatusData(), fetchForwardTestData()])
+            .then(([statusPayload, forwardTestPayload]) => {
+                if (requestId !== state.requestId) return;
+                renderForwardTestBanner(statusPayload || {}, forwardTestPayload || {});
+                renderForwardTestHealth(statusPayload || {}, forwardTestPayload || {});
+            })
+            .catch(() => {
+                if (requestId !== state.requestId) return;
+                const banner = document.getElementById("forward-test-banner");
+                banner.className = "forward-test-banner forward-test-banner-off";
+                banner.innerHTML = "<strong>Forward Test</strong><span>Forward-test status unavailable right now.</span>";
+                document.getElementById("forward-test-health-panel").innerHTML = '<div class="empty-state">Forward-test health unavailable right now.</div>';
+            });
+
         fetchScanReportData()
             .then((scanReportPayload) => {
                 if (requestId !== state.requestId) return;
@@ -1331,6 +2077,7 @@ function bindEvents() {
     document.getElementById("source-select").addEventListener("change", () => refreshDashboard(false));
     document.getElementById("interval-select").addEventListener("change", () => refreshDashboard(true));
     document.getElementById("journal-pair-filter").addEventListener("change", () => refreshDashboard(false));
+    document.getElementById("journal-strategy-filter").addEventListener("change", () => refreshDashboard(false));
     document.getElementById("journal-result-filter").addEventListener("change", () => refreshDashboard(false));
     document.getElementById("journal-quality-filter").addEventListener("change", () => refreshDashboard(false));
     document.getElementById("journal-month-filter").addEventListener("change", () => refreshDashboard(false));

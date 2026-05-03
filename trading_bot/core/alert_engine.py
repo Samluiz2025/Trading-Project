@@ -526,6 +526,7 @@ def _get_symbol_currencies(symbol: str) -> tuple[str, str]:
         "GER40": ("GER40", "EUR"),
         "UK100": ("UK100", "GBP"),
         "JP225": ("JP225", "JPY"),
+        "JPN225": ("JP225", "JPY"),
     }
     if cleaned in special_mappings:
         return special_mappings[cleaned]

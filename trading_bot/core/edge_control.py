@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections import defaultdict
 from datetime import UTC, datetime
 from pathlib import Path
@@ -17,6 +18,11 @@ DATA_DIR = BASE_DIR / "data"
 EDGE_CONTROL_PATH = DATA_DIR / "edge_control.json"
 DEFAULT_TIMEZONE = "Europe/Vienna"
 GRADE_RANK = {"D": 0, "C": 1, "B": 2, "A": 3, "A+": 4}
+
+
+def protection_logic_bypassed() -> bool:
+    value = str(os.getenv("DISABLE_PROTECTION_LOGIC", "") or os.getenv("FORWARD_TEST_MODE", "")).strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 
 def load_edge_control_settings() -> dict[str, Any]:
@@ -89,7 +95,13 @@ def build_edge_control_snapshot(
     ]
     daily_entries = _entries_for_local_day(closed_entries, timezone=timezone)
     weekly_entries = _entries_for_local_week(closed_entries, timezone=timezone)
-    consecutive_losses = _count_consecutive_losses(closed_entries)
+    consecutive_loss_scope = _normalize_consecutive_loss_scope(settings.get("consecutive_loss_scope"))
+    consecutive_loss_entries = _entries_for_loss_scope(
+        closed_entries,
+        timezone=timezone,
+        scope=consecutive_loss_scope,
+    )
+    consecutive_losses = _count_consecutive_losses(consecutive_loss_entries)
     validation_snapshot = build_validation_snapshot(entries=entries)
 
     symbol_breakdown = validation_snapshot.get("symbol_breakdown", [])
@@ -149,6 +161,7 @@ def build_edge_control_snapshot(
         "lock_reasons": lock_reasons,
         "consecutive_losses": consecutive_losses,
         "max_consecutive_losses": max_consecutive_losses,
+        "consecutive_loss_scope": consecutive_loss_scope,
         "daily": {
             "date": local_now.date().isoformat(),
             "closed_trades": len(daily_entries),
@@ -193,6 +206,21 @@ def evaluate_edge_control(
     session = str(candidate.get("session") or candidate.get("analysis_context", {}).get("session") or "").strip().lower()
     setup_grade = _normalize_grade(candidate.get("setup_grade"))
     reasons: list[str] = []
+
+    if protection_logic_bypassed():
+        return {
+            "allowed": True,
+            "reasons": [],
+            "symbol": symbol,
+            "session": session,
+            "setup_grade": setup_grade,
+            "symbol_filter_mode": _normalize_symbol_filter_mode(snapshot.get("symbol_filter_mode")),
+            "session_filter_mode": _normalize_session_filter_mode(snapshot.get("session_filter_mode")),
+            "locked": False,
+            "shadow_eligible": False,
+            "trade_mode": "live",
+            "bypassed": True,
+        }
 
     if not snapshot.get("enabled", True):
         return {
@@ -261,6 +289,7 @@ def _default_edge_control_settings() -> dict[str, Any]:
         "max_daily_net_r_loss": 2.0,
         "max_weekly_net_r_loss": 5.0,
         "max_consecutive_losses": 2,
+        "consecutive_loss_scope": "day",
         "manual_symbol_whitelist": [],
         "manual_symbol_blacklist": [],
         "calibrated_symbol_whitelist": [],
@@ -292,6 +321,7 @@ def _with_defaults(settings: dict[str, Any]) -> dict[str, Any]:
     merged["calibrated_symbol_whitelist"] = _normalize_symbols(merged.get("calibrated_symbol_whitelist"))
     merged["calibrated_symbol_blacklist"] = _normalize_symbols(merged.get("calibrated_symbol_blacklist"))
     merged["minimum_setup_grade"] = _normalize_grade(merged.get("minimum_setup_grade"))
+    merged["consecutive_loss_scope"] = _normalize_consecutive_loss_scope(merged.get("consecutive_loss_scope"))
     merged["active_strategy"] = normalize_strategy_scope(merged.get("active_strategy") or ACTIVE_STRATEGY)
     merged["timezone"] = _resolve_timezone(merged.get("timezone")).key
     return merged
@@ -329,6 +359,11 @@ def _normalize_symbol_filter_mode(value: Any) -> str:
 def _normalize_grade(value: Any) -> str:
     normalized = str(value or "A+").strip().upper()
     return normalized if normalized in GRADE_RANK else "A+"
+
+
+def _normalize_consecutive_loss_scope(value: Any) -> str:
+    normalized = str(value or "day").strip().lower()
+    return normalized if normalized in {"all", "week", "day"} else "day"
 
 
 def _grade_score(value: Any) -> int:
@@ -370,6 +405,15 @@ def _entries_for_local_week(entries: list[dict[str, Any]], *, timezone: ZoneInfo
         if iso.year == current_week.year and iso.week == current_week.week:
             filtered.append(entry)
     return filtered
+
+
+def _entries_for_loss_scope(entries: list[dict[str, Any]], *, timezone: ZoneInfo, scope: str) -> list[dict[str, Any]]:
+    normalized_scope = _normalize_consecutive_loss_scope(scope)
+    if normalized_scope == "all":
+        return entries
+    if normalized_scope == "week":
+        return _entries_for_local_week(entries, timezone=timezone)
+    return _entries_for_local_day(entries, timezone=timezone)
 
 
 def _entry_local_datetime(entry: dict[str, Any], *, timezone: ZoneInfo) -> datetime:

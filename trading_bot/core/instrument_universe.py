@@ -1,6 +1,16 @@
 from __future__ import annotations
 
 
+SYMBOL_ALIASES = {
+    "JP225": "JPN225",
+}
+
+
+def normalize_instrument_symbol(symbol: str) -> str:
+    normalized = str(symbol or "").strip().upper()
+    return SYMBOL_ALIASES.get(normalized, normalized)
+
+
 CORE_WATCHLIST_FOREX = [
     "EURUSD",
     "GBPUSD",
@@ -8,13 +18,12 @@ CORE_WATCHLIST_FOREX = [
     "AUDCAD",
     "NZDUSD",
     "EURGBP",
-    "EURNZD",
     "GBPAUD",
+    "GBPNZD",
     "USDCHF",
     "USDJPY",
     "AUDJPY",
     "CHFJPY",
-    "NZDJPY",
     "CADJPY",
     "GBPJPY",
     "GBPCHF",
@@ -29,10 +38,8 @@ ALL_FOREX_PAIRS = [
     "USDCHF",
     "USDJPY",
     "EURGBP",
-    "EURJPY",
     "EURCHF",
     "EURAUD",
-    "EURNZD",
     "EURCAD",
     "GBPJPY",
     "GBPCHF",
@@ -43,9 +50,6 @@ ALL_FOREX_PAIRS = [
     "AUDNZD",
     "AUDCAD",
     "AUDCHF",
-    "NZDJPY",
-    "NZDCAD",
-    "NZDCHF",
     "CADJPY",
     "CADCHF",
     "CHFJPY",
@@ -53,6 +57,7 @@ ALL_FOREX_PAIRS = [
 
 WATCHLIST_METALS = [
     "XAUUSD",
+    "USOIL",
 ]
 
 WATCHLIST_INDICES = [
@@ -61,12 +66,13 @@ WATCHLIST_INDICES = [
     "US30",
     "GER40",
     "UK100",
-    "JP225",
+    "JPN225",
 ]
 
 WATCHLIST_CRYPTO = [
     "BTCUSDT",
     "ETHUSDT",
+    "SOLUSDT",
 ]
 
 APPROVED_SYMBOLS = ALL_FOREX_PAIRS + WATCHLIST_METALS + WATCHLIST_INDICES + WATCHLIST_CRYPTO
@@ -88,4 +94,4 @@ def get_instrument_universe(group: str = "all") -> list[str]:
 
 
 def is_supported_symbol(symbol: str) -> bool:
-    return str(symbol or "").strip().upper() in APPROVED_SYMBOLS
+    return normalize_instrument_symbol(symbol) in APPROVED_SYMBOLS

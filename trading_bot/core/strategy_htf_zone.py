@@ -5,16 +5,18 @@ from dataclasses import dataclass
 import pandas as pd
 
 from trading_bot.core.market_structure import detect_market_structure, detect_swings, validate_ohlc_dataframe
-from trading_bot.core.strategy_registry import HTF_ZONE_STRATEGY
+from trading_bot.core.prop_execution import apply_prop_execution_to_setup
+from trading_bot.core.strategy_registry import HTF_ZONE_STRATEGY, supports_live_symbol
 from trading_bot.core.supply_demand import detect_supply_demand_zones
 
 
 @dataclass(frozen=True)
 class HtfZoneReactionConfig:
     symbol: str
-    minimum_rr: float = 2.0
+    minimum_rr: float = 2.5  # Increased from 2.0 for better risk management
     preferred_rr: float = 3.0
     stop_buffer_ratio: float = 0.0004
+    confirmation_stop_buffer_ratio: float = 0.00025
     zone_proximity_ratio: float = 0.0018
     confirmation_lookback: int = 32
     entry_retest_ratio: float = 0.0006
@@ -26,6 +28,7 @@ def build_htf_zone_reaction_config(symbol: str) -> HtfZoneReactionConfig:
         return HtfZoneReactionConfig(
             symbol=normalized,
             stop_buffer_ratio=0.0009,
+            confirmation_stop_buffer_ratio=0.00055,
             zone_proximity_ratio=0.0024,
             entry_retest_ratio=0.001,
         )
@@ -33,6 +36,7 @@ def build_htf_zone_reaction_config(symbol: str) -> HtfZoneReactionConfig:
         return HtfZoneReactionConfig(
             symbol=normalized,
             stop_buffer_ratio=0.00055,
+            confirmation_stop_buffer_ratio=0.00035,
             zone_proximity_ratio=0.0022,
             entry_retest_ratio=0.0009,
         )
@@ -167,6 +171,9 @@ def generate_htf_zone_reaction_setup(
                 },
             },
             analysis_context={"session": session_name, "plan_zone": zone["plan_zone"], "zone_type": zone.get("type")},
+            execution_timeframe="15m",
+            execution_state="waiting_for_zone_touch",
+            execution_model="Daily zone -> M15 reaction -> retest entry",
         )
 
     if not _price_strictly_in_zone(latest_price=latest_price, zone_low=zone_low, zone_high=zone_high):
@@ -199,6 +206,9 @@ def generate_htf_zone_reaction_setup(
                 },
             },
             analysis_context={"session": session_name, "plan_zone": zone["plan_zone"], "zone_type": zone.get("type")},
+            execution_timeframe="15m",
+            execution_state="waiting_for_zone_entry",
+            execution_model="Daily zone -> M15 reaction -> retest entry",
         )
 
     confirmation = _detect_zone_reaction_confirmation(
@@ -210,6 +220,72 @@ def generate_htf_zone_reaction_setup(
         lookback=active_config.confirmation_lookback,
     )
     if not confirmation.get("confirmed"):
+        early_entry = _detect_early_zone_reaction_entry(
+            m15_frame=m15_frame,
+            trade_side=trade_side,
+            zone_low=zone_low,
+            zone_high=zone_high,
+            lookback=active_config.confirmation_lookback,
+        )
+        if early_entry.get("confirmed"):
+            entry = round(float(early_entry["entry"]), 4)
+            stop_loss = round(
+                _build_execution_stop_loss(
+                    trade_side=trade_side,
+                    zone=zone,
+                    confirmation=early_entry,
+                    config=active_config,
+                ),
+                4,
+            )
+            target = _select_take_profit(
+                h1_frame,
+                trade_side=trade_side,
+                entry=entry,
+                stop_loss=stop_loss,
+                minimum_rr=active_config.minimum_rr,
+                preferred_rr=active_config.preferred_rr,
+            )
+            if target.get("confirmed"):
+                take_profit = round(float(target["tp"]), 4)
+                risk_reward_ratio = round(float(target["rr"]), 2)
+                setup_grade = "B"
+                return apply_prop_execution_to_setup({
+                    "status": "VALID_TRADE",
+                    "pair": normalized_symbol,
+                    "strategy": HTF_ZONE_STRATEGY,
+                    "strategies": [HTF_ZONE_STRATEGY],
+                    "message": "Valid trade setup available",
+                    "bias": trade_side,
+                    "daily_bias": daily_bias,
+                    "h1_bias": h1_bias,
+                    "entry": entry,
+                    "sl": stop_loss,
+                    "tp": take_profit,
+                    "risk_reward_ratio": risk_reward_ratio,
+                    "setup_grade": setup_grade,
+                    "setup_type": "HTF zone reaction",
+                    "session": session_name,
+                    "session_preferred": bool(session_context.get("preferred")),
+                    "confidence": "NORMAL",
+                    "confidence_score": 73,
+                    "invalidation": stop_loss,
+                    "reason": "Daily zone is active and M15 printed an early reclaim/rejection entry.",
+                    "confluences": [*common_confluences, "Zone Touched", "M15 Early Reclaim", f"RR 1:{int(target['rr_floor'])}"],
+                    "missing": [],
+                    "lifecycle": "entry_reached",
+                    "stalker": None,
+                    "details": {**common_details, "confirmation": early_entry, "target": target},
+                    "analysis_context": {
+                        "session": session_name,
+                        "plan_zone": zone["plan_zone"],
+                        "zone_type": zone.get("type"),
+                        "confirmation_time": early_entry.get("time"),
+                    },
+                    "execution_timeframe": "15m",
+                    "execution_state": "confirmed_early",
+                    "execution_model": "Daily zone -> early M15 reclaim",
+                })
         return _no_trade(
             symbol=normalized_symbol,
             reason="Price is in the Daily zone. Waiting for H1/M15 confirmation.",
@@ -240,9 +316,13 @@ def generate_htf_zone_reaction_setup(
                 },
             },
             analysis_context={"session": session_name, "plan_zone": zone["plan_zone"], "zone_type": zone.get("type")},
+            execution_timeframe="15m",
+            execution_state="waiting_for_m15_confirmation",
+            execution_model="Daily zone -> M15 reaction -> retest entry",
         )
 
     entry_plan = _build_confirmation_entry(
+        m15_frame=m15_frame,
         trade_side=trade_side,
         zone_low=zone_low,
         zone_high=zone_high,
@@ -260,10 +340,21 @@ def generate_htf_zone_reaction_setup(
             confluences=[*common_confluences, "Zone Touched", "H1/M15 Shift"],
             details={**common_details, "confirmation": confirmation},
             analysis_context={"session": session_name, "plan_zone": zone["plan_zone"], "zone_type": zone.get("type")},
+            execution_timeframe="15m",
+            execution_state="waiting_for_retest_entry",
+            execution_model="Daily zone -> M15 reaction -> retest entry",
         )
 
     entry = round(float(entry_plan["entry"]), 4)
-    stop_loss = round(_build_zone_stop_loss(trade_side=trade_side, zone=zone, config=active_config), 4)
+    stop_loss = round(
+        _build_execution_stop_loss(
+            trade_side=trade_side,
+            zone=zone,
+            confirmation=confirmation,
+            config=active_config,
+        ),
+        4,
+    )
     target = _select_take_profit(
         h1_frame,
         trade_side=trade_side,
@@ -283,13 +374,22 @@ def generate_htf_zone_reaction_setup(
             confluences=[*common_confluences, "Zone Touched", "H1/M15 Shift"],
             details={**common_details, "confirmation": confirmation, "entry_plan": entry_plan},
             analysis_context={"session": session_name, "plan_zone": zone["plan_zone"], "zone_type": zone.get("type")},
+            execution_timeframe="15m",
+            execution_state="retest_confirmed_rr_failed",
+            execution_model="Daily zone -> M15 reaction -> retest entry",
         )
 
     take_profit = round(float(target["tp"]), 4)
     risk_reward_ratio = round(float(target["rr"]), 2)
     setup_grade = "A+" if risk_reward_ratio >= active_config.preferred_rr else "B"
+    confirmation_mode = str(confirmation.get("mode") or "swing_break")
+    confirmation_confluence = "M15 Swing Break" if confirmation_mode == "swing_break" else "M15 Reaction Reclaim"
+    execution_confluence = "M15 Order Block Retest" if str(entry_plan.get("type") or "") == "m15_order_block_retest" else "M15 Retest Entry"
+    confidence_score = 90 if setup_grade == "A+" else 77
+    if confirmation_mode != "swing_break":
+        confidence_score -= 4
 
-    return {
+    return apply_prop_execution_to_setup({
         "status": "VALID_TRADE",
         "pair": normalized_symbol,
         "strategy": HTF_ZONE_STRATEGY,
@@ -306,11 +406,11 @@ def generate_htf_zone_reaction_setup(
         "setup_type": "HTF zone reaction",
         "session": session_name,
         "session_preferred": bool(session_context.get("preferred")),
-        "confidence": "HIGH" if setup_grade == "A+" else "NORMAL",
-        "confidence_score": 90 if setup_grade == "A+" else 77,
+        "confidence": "HIGH" if setup_grade == "A+" and confirmation_mode == "swing_break" else "NORMAL",
+        "confidence_score": confidence_score,
         "invalidation": stop_loss,
-        "reason": "Daily zone, lower-timeframe reaction, and confirmation entry all align.",
-        "confluences": [*common_confluences, "Zone Touched", "H1/M15 Shift", f"RR 1:{int(target['rr_floor'])}"],
+        "reason": "Daily zone, M15 reaction confirmation, and refined retest entry all align.",
+        "confluences": [*common_confluences, "Zone Touched", confirmation_confluence, execution_confluence, f"RR 1:{int(target['rr_floor'])}"],
         "missing": [],
         "lifecycle": "entry_reached",
         "stalker": None,
@@ -321,13 +421,14 @@ def generate_htf_zone_reaction_setup(
             "zone_type": zone.get("type"),
             "confirmation_time": confirmation.get("time"),
         },
-    }
+        "execution_timeframe": "15m",
+        "execution_state": "confirmed",
+        "execution_model": "Daily zone -> M15 reaction -> retest entry",
+    })
 
 
 def _supports_market(symbol: str) -> bool:
-    if symbol == "XAUUSD":
-        return True
-    return len(symbol) == 6 and symbol.isalpha()
+    return supports_live_symbol(symbol)
 
 
 def _detect_session_context(last_time: pd.Timestamp, *, symbol: str) -> dict:
@@ -411,16 +512,23 @@ def _detect_zone_reaction_confirmation(
     if recent.empty:
         return {"confirmed": False}
 
-    touched = recent[(recent["low"] <= zone_high) & (recent["high"] >= zone_low)].reset_index(drop=True)
+    touched = recent[(recent["low"] <= zone_high) & (recent["high"] >= zone_low)]
     if touched.empty:
         return {"confirmed": False, "reason": "Zone not touched"}
 
     touch_index = int(touched.index[-1])
     recent_touch_time = pd.Timestamp(touched.iloc[-1]["time"]).isoformat()
     recent_swings = detect_swings(recent, swing_window=2)
+    zone_mid = (zone_low + zone_high) / 2
+    body_baseline = abs(recent["close"].astype(float) - recent["open"].astype(float)).tail(24).median()
+    body_baseline = max(float(body_baseline), 1e-9)
 
     if trade_side == "BUY":
-        lows = [item for item in recent_swings if item["type"] == "low" and zone_low <= float(item["price"]) <= zone_high]
+        lows = [
+            item
+            for item in recent_swings
+            if item["type"] == "low" and zone_low <= float(item["price"]) <= zone_high and int(item["index"]) >= max(0, touch_index - 2)
+        ]
         highs = [item for item in recent_swings if item["type"] == "high"]
         if not lows or not highs:
             return {"confirmed": False, "time": recent_touch_time}
@@ -429,41 +537,251 @@ def _detect_zone_reaction_confirmation(
         if not highs_after:
             return {"confirmed": False, "time": recent_touch_time}
         break_level = float(highs_after[0]["price"])
-        latest_close = float(recent.iloc[-1]["close"])
+        break_index = len(recent) - 1
+        latest_close = float(recent.iloc[break_index]["close"])
         if latest_close <= break_level:
-            return {"confirmed": False, "time": recent_touch_time}
+            return _soft_zone_reaction_confirmation(
+                recent=recent,
+                trade_side=trade_side,
+                touch_index=touch_index,
+                zone_low=zone_low,
+                zone_high=zone_high,
+                zone_mid=zone_mid,
+                body_baseline=body_baseline,
+                recent_touch_time=recent_touch_time,
+            )
         return {
             "confirmed": True,
-            "time": pd.Timestamp(recent.iloc[-1]["time"]).isoformat(),
+            "mode": "swing_break",
+            "time": pd.Timestamp(recent.iloc[break_index]["time"]).isoformat(),
             "touch_time": recent_touch_time,
+            "touch_index": touch_index,
+            "break_index": break_index,
             "pivot_price": float(pivot_low["price"]),
+            "pivot_index": int(pivot_low["index"]),
             "break_level": round(break_level, 4),
             "entry_anchor": round((break_level + zone_high) / 2, 4),
         }
 
-    highs = [item for item in recent_swings if item["type"] == "high" and zone_low <= float(item["price"]) <= zone_high]
+    highs = [
+        item
+        for item in recent_swings
+        if item["type"] == "high" and zone_low <= float(item["price"]) <= zone_high and int(item["index"]) >= max(0, touch_index - 2)
+    ]
     lows = [item for item in recent_swings if item["type"] == "low"]
     if not highs or not lows:
         return {"confirmed": False, "time": recent_touch_time}
     pivot_high = highs[-1]
     lows_after = [item for item in lows if int(item["index"]) > int(pivot_high["index"])]
     if not lows_after:
-        return {"confirmed": False, "time": recent_touch_time}
+        return _soft_zone_reaction_confirmation(
+            recent=recent,
+            trade_side=trade_side,
+            touch_index=touch_index,
+            zone_low=zone_low,
+            zone_high=zone_high,
+            zone_mid=zone_mid,
+            body_baseline=body_baseline,
+            recent_touch_time=recent_touch_time,
+        )
     break_level = float(lows_after[0]["price"])
-    latest_close = float(recent.iloc[-1]["close"])
+    break_index = len(recent) - 1
+    latest_close = float(recent.iloc[break_index]["close"])
     if latest_close >= break_level:
-        return {"confirmed": False, "time": recent_touch_time}
+        return _soft_zone_reaction_confirmation(
+            recent=recent,
+            trade_side=trade_side,
+            touch_index=touch_index,
+            zone_low=zone_low,
+            zone_high=zone_high,
+            zone_mid=zone_mid,
+            body_baseline=body_baseline,
+            recent_touch_time=recent_touch_time,
+        )
     return {
         "confirmed": True,
-        "time": pd.Timestamp(recent.iloc[-1]["time"]).isoformat(),
+        "mode": "swing_break",
+        "time": pd.Timestamp(recent.iloc[break_index]["time"]).isoformat(),
         "touch_time": recent_touch_time,
+        "touch_index": touch_index,
+        "break_index": break_index,
         "pivot_price": float(pivot_high["price"]),
+        "pivot_index": int(pivot_high["index"]),
         "break_level": round(break_level, 4),
         "entry_anchor": round((break_level + zone_low) / 2, 4),
     }
 
 
-def _build_confirmation_entry(*, trade_side: str, zone_low: float, zone_high: float, confirmation: dict, tolerance_ratio: float) -> dict:
+def _soft_zone_reaction_confirmation(
+    *,
+    recent: pd.DataFrame,
+    trade_side: str,
+    touch_index: int,
+    zone_low: float,
+    zone_high: float,
+    zone_mid: float,
+    body_baseline: float,
+    recent_touch_time: str,
+) -> dict:
+    window = recent.iloc[max(touch_index, 1):].reset_index(drop=True)
+    if window.empty:
+        return {"confirmed": False, "time": recent_touch_time}
+
+    for index in range(1, len(window)):
+        candle = window.iloc[index]
+        previous = window.iloc[index - 1]
+        open_price = float(candle["open"])
+        close_price = float(candle["close"])
+        high_price = float(candle["high"])
+        low_price = float(candle["low"])
+        candle_range = max(high_price - low_price, 1e-9)
+        close_position = (close_price - low_price) / candle_range
+        body_ratio = abs(close_price - open_price) / body_baseline
+
+        if trade_side == "BUY":
+            rejection_ok = (
+                close_price > open_price
+                and close_price > zone_mid
+                and close_price > float(previous["close"])
+                and close_position >= 0.58
+                and body_ratio >= 0.72
+            )
+            if rejection_ok:
+                return {
+                    "confirmed": True,
+                    "mode": "reaction_reclaim",
+                    "time": pd.Timestamp(candle["time"]).isoformat(),
+                    "touch_time": recent_touch_time,
+                    "touch_index": touch_index,
+                    "break_index": int(candle.name),
+                    "pivot_price": round(min(float(previous["low"]), low_price), 4),
+                    "pivot_index": max(touch_index, int(index) - 1),
+                    "break_level": round(max(zone_mid, float(previous["close"])), 4),
+                    "entry_anchor": round(max(zone_mid, min(close_price, zone_high)), 4),
+                    "body_ratio": round(body_ratio, 2),
+                }
+        else:
+            rejection_ok = (
+                close_price < open_price
+                and close_price < zone_mid
+                and close_price < float(previous["close"])
+                and close_position <= 0.42
+                and body_ratio >= 0.72
+            )
+            if rejection_ok:
+                return {
+                    "confirmed": True,
+                    "mode": "reaction_reclaim",
+                    "time": pd.Timestamp(candle["time"]).isoformat(),
+                    "touch_time": recent_touch_time,
+                    "touch_index": touch_index,
+                    "break_index": int(candle.name),
+                    "pivot_price": round(max(float(previous["high"]), high_price), 4),
+                    "pivot_index": max(touch_index, int(index) - 1),
+                    "break_level": round(min(zone_mid, float(previous["close"])), 4),
+                    "entry_anchor": round(min(zone_mid, max(close_price, zone_low)), 4),
+                    "body_ratio": round(body_ratio, 2),
+                }
+
+    return {"confirmed": False, "time": recent_touch_time}
+
+
+def _detect_early_zone_reaction_entry(
+    *,
+    m15_frame: pd.DataFrame,
+    trade_side: str,
+    zone_low: float,
+    zone_high: float,
+    lookback: int,
+) -> dict:
+    recent = m15_frame.tail(lookback).reset_index(drop=True)
+    if len(recent) < 4:
+        return {"confirmed": False}
+
+    touched = recent[(recent["low"] <= zone_high) & (recent["high"] >= zone_low)]
+    if touched.empty:
+        return {"confirmed": False}
+
+    touch_index = int(touched.index[-1])
+    zone_mid = (zone_low + zone_high) / 2
+    body_baseline = abs(recent["close"].astype(float) - recent["open"].astype(float)).tail(24).median()
+    body_baseline = max(float(body_baseline), 1e-9)
+    window = recent.iloc[max(1, touch_index):].reset_index(drop=True)
+    if window.empty:
+        return {"confirmed": False}
+
+    for index in range(1, len(window)):
+        candle = window.iloc[index]
+        previous = window.iloc[index - 1]
+        open_price = float(candle["open"])
+        close_price = float(candle["close"])
+        high_price = float(candle["high"])
+        low_price = float(candle["low"])
+        candle_range = max(high_price - low_price, 1e-9)
+        close_position = (close_price - low_price) / candle_range
+        body_ratio = abs(close_price - open_price) / body_baseline
+
+        if trade_side == "BUY":
+            if (
+                close_price > open_price
+                and close_price >= zone_mid
+                and close_price >= float(previous["close"])
+                and close_position >= 0.58
+                and body_ratio >= 0.78
+            ):
+                return {
+                    "confirmed": True,
+                    "mode": "early_reclaim",
+                    "time": pd.Timestamp(candle["time"]).isoformat(),
+                    "touch_time": pd.Timestamp(touched.iloc[-1]["time"]).isoformat(),
+                    "pivot_price": round(min(float(previous["low"]), low_price), 4),
+                    "entry": round(close_price, 4),
+                    "entry_anchor": round(max(zone_mid, min(close_price, zone_high)), 4),
+                }
+        else:
+            if (
+                close_price < open_price
+                and close_price <= zone_mid
+                and close_price <= float(previous["close"])
+                and close_position <= 0.42
+                and body_ratio >= 0.78
+            ):
+                return {
+                    "confirmed": True,
+                    "mode": "early_reclaim",
+                    "time": pd.Timestamp(candle["time"]).isoformat(),
+                    "touch_time": pd.Timestamp(touched.iloc[-1]["time"]).isoformat(),
+                    "pivot_price": round(max(float(previous["high"]), high_price), 4),
+                    "entry": round(close_price, 4),
+                    "entry_anchor": round(min(zone_mid, max(close_price, zone_low)), 4),
+                }
+
+    return {"confirmed": False}
+
+
+def _build_confirmation_entry(
+    *,
+    m15_frame: pd.DataFrame,
+    trade_side: str,
+    zone_low: float,
+    zone_high: float,
+    confirmation: dict,
+    tolerance_ratio: float,
+) -> dict:
+    execution_zone = _find_execution_order_block(
+        m15_frame=m15_frame,
+        trade_side=trade_side,
+        confirmation=confirmation,
+    )
+    if execution_zone.get("confirmed"):
+        order_block_zone = execution_zone["entry_zone"]
+        return {
+            "confirmed": True,
+            "type": "m15_order_block_retest",
+            "entry_zone": order_block_zone,
+            "entry": round((order_block_zone[0] + order_block_zone[1]) / 2, 4),
+        }
+
     entry_anchor = float(confirmation.get("entry_anchor") or ((zone_low + zone_high) / 2))
     tolerance = max(abs(entry_anchor) * tolerance_ratio, 0.00015)
     if trade_side == "BUY":
@@ -474,8 +792,38 @@ def _build_confirmation_entry(*, trade_side: str, zone_low: float, zone_high: fl
         zone = [round(min(zone_low, zone_high), 4), round(max(zone_low, zone_high), 4)]
     return {
         "confirmed": True,
+        "type": "m15_retest",
         "entry_zone": zone,
         "entry": round((zone[0] + zone[1]) / 2, 4),
+    }
+
+
+def _find_execution_order_block(*, m15_frame: pd.DataFrame, trade_side: str, confirmation: dict) -> dict:
+    break_time = confirmation.get("time")
+    touch_time = confirmation.get("touch_time")
+    if not break_time or not touch_time:
+        return {"confirmed": False}
+
+    window = m15_frame[
+        (m15_frame["time"] >= pd.Timestamp(touch_time)) & (m15_frame["time"] <= pd.Timestamp(break_time))
+    ].reset_index(drop=True)
+    if window.empty:
+        return {"confirmed": False}
+
+    if trade_side == "BUY":
+        opposite = window[window["close"] < window["open"]].tail(1)
+    else:
+        opposite = window[window["close"] > window["open"]].tail(1)
+    if opposite.empty:
+        return {"confirmed": False}
+
+    candle = opposite.iloc[-1]
+    zone_low = round(float(candle["low"]), 4)
+    zone_high = round(float(candle["high"]), 4)
+    return {
+        "confirmed": True,
+        "formed_at": pd.Timestamp(candle["time"]).isoformat(),
+        "entry_zone": [zone_low, zone_high],
     }
 
 
@@ -484,6 +832,19 @@ def _build_zone_stop_loss(*, trade_side: str, zone: dict, config: HtfZoneReactio
     edge = zone_low if trade_side == "BUY" else zone_high
     buffer_size = max(abs(edge) * config.stop_buffer_ratio, 0.0001)
     return edge - buffer_size if trade_side == "BUY" else edge + buffer_size
+
+
+def _build_execution_stop_loss(*, trade_side: str, zone: dict, confirmation: dict, config: HtfZoneReactionConfig) -> float:
+    zone_stop = _build_zone_stop_loss(trade_side=trade_side, zone=zone, config=config)
+    pivot_price = float(confirmation.get("pivot_price") or 0.0)
+    if pivot_price <= 0:
+        return zone_stop
+
+    pivot_buffer = max(abs(pivot_price) * config.confirmation_stop_buffer_ratio, 0.0001)
+    pivot_stop = pivot_price - pivot_buffer if trade_side == "BUY" else pivot_price + pivot_buffer
+    if trade_side == "BUY":
+        return max(zone_stop, pivot_stop)
+    return min(zone_stop, pivot_stop)
 
 
 def _select_take_profit(
@@ -560,10 +921,13 @@ def _no_trade(
     lifecycle: str = "no_trade",
     stalker: dict | None = None,
     analysis_context: dict | None = None,
+    execution_timeframe: str | None = None,
+    execution_state: str | None = None,
+    execution_model: str | None = None,
 ) -> dict:
     merged_context = {"session": session} if session else {}
     merged_context.update(analysis_context or {})
-    return {
+    return apply_prop_execution_to_setup({
         "status": status,
         "pair": symbol,
         "strategy": HTF_ZONE_STRATEGY,
@@ -589,4 +953,7 @@ def _no_trade(
         "stalker": stalker,
         "details": details or {},
         "analysis_context": merged_context,
-    }
+        "execution_timeframe": execution_timeframe,
+        "execution_state": execution_state,
+        "execution_model": execution_model,
+    })

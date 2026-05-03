@@ -10,6 +10,26 @@ STRATEGY_RESULT_KEYS = {
     PULLBACK_STRATEGY: "pullback",
     HTF_ZONE_STRATEGY: "htf_zone",
 }
+LIVE_SPECIAL_SYMBOLS = {
+    "XAUUSD",
+    "USOIL",
+    "NAS100",
+    "SP500",
+    "US30",
+    "GER40",
+    "UK100",
+    "JPN225",
+    "JP225",
+}
+
+
+def supports_live_symbol(symbol: object) -> bool:
+    normalized = str(symbol or "").strip().upper().replace("/", "").replace("_", "")
+    if normalized in LIVE_SPECIAL_SYMBOLS:
+        return True
+    if normalized.endswith("USDT") and len(normalized) >= 7 and normalized.isalpha():
+        return True
+    return len(normalized) == 6 and normalized.isalpha()
 
 
 def normalize_strategy_scope(value: object) -> str:

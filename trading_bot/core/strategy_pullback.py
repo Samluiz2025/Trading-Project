@@ -5,14 +5,25 @@ from dataclasses import dataclass
 import pandas as pd
 
 from trading_bot.core.market_structure import detect_market_structure, detect_swings, validate_ohlc_dataframe
-from trading_bot.core.strategy_registry import PULLBACK_STRATEGY
+from trading_bot.core.prop_execution import apply_prop_execution_to_setup
+from trading_bot.core.strategy_registry import PULLBACK_STRATEGY, supports_live_symbol
 from trading_bot.core.supply_demand import detect_supply_demand_zones
+
+
+AFTER_HOURS_DISABLED_PULLBACK_SYMBOLS = {
+    "EURJPY",
+    "EURCAD",
+    "NZDCHF",
+    "NZDCAD",
+    "NZDJPY",
+    "GBPCHF",
+}
 
 
 @dataclass(frozen=True)
 class PullbackContinuationConfig:
     symbol: str
-    minimum_rr: float = 2.0
+    minimum_rr: float = 2.5  # Increased from 2.0 for better risk management
     preferred_rr: float = 3.0
     stop_buffer_ratio: float = 0.00035
     zone_proximity_ratio: float = 0.0018
@@ -88,6 +99,20 @@ def generate_pullback_continuation_setup(
     latest_price = float(m15_frame.iloc[-1]["close"])
     session_context = _detect_session_context(pd.Timestamp(m15_frame.iloc[-1]["time"]), symbol=normalized_symbol)
     session_name = str(session_context.get("session") or "")
+    prime_session = bool(session_context.get("preferred"))
+    stronger_session_confirmation = not prime_session
+    pullback_confirmation_body_ratio = active_config.confirmation_body_ratio + (0.12 if stronger_session_confirmation else 0.0)
+
+    if session_name == "after_hours" and normalized_symbol in AFTER_HOURS_DISABLED_PULLBACK_SYMBOLS:
+        return _no_trade(
+            symbol=normalized_symbol,
+            reason="Trend pullback continuation is disabled for this pair in after-hours trading.",
+            daily_bias=None,
+            h1_bias=None,
+            session=session_name,
+            missing=["After-hours pullback disabled"],
+            confluences=["Session Filter"],
+        )
 
     daily_structure = detect_market_structure(daily_frame)
     daily_bias = str(daily_structure.get("trend") or "")
@@ -254,6 +279,9 @@ def generate_pullback_continuation_setup(
                 },
             },
             analysis_context=common_context,
+            execution_timeframe="15m",
+            execution_state="waiting_for_zone_retest",
+            execution_model="HTF trend -> pullback zone -> M15 rejection",
         )
 
     confirmation = _detect_pullback_confirmation(
@@ -261,9 +289,76 @@ def generate_pullback_continuation_setup(
         trade_side=trade_side,
         zone_low=float(zone_low),
         zone_high=float(zone_high),
-        minimum_body_ratio=active_config.confirmation_body_ratio,
+        minimum_body_ratio=pullback_confirmation_body_ratio,
     )
     if not confirmation.get("confirmed"):
+        early_entry = {"confirmed": False}
+        if prime_session:
+            early_entry = _detect_early_pullback_entry(
+                m15_frame,
+                trade_side=trade_side,
+                zone_low=float(zone_low),
+                zone_high=float(zone_high),
+                minimum_body_ratio=pullback_confirmation_body_ratio + (0.06 if stronger_session_confirmation else 0.0),
+            )
+        if early_entry.get("confirmed") and prime_session:
+            live_entry = _derive_precision_pullback_entry(
+                trade_side=trade_side,
+                planned_entry=entry,
+                zone_low=float(zone_low),
+                zone_high=float(zone_high),
+                confirmation=early_entry,
+                fallback_entry=float(early_entry.get("entry") or latest_price),
+            )
+            live_target = _select_take_profit(
+                h1_frame,
+                trade_side=trade_side,
+                entry=live_entry,
+                stop_loss=stop_loss,
+                minimum_rr=active_config.minimum_rr,
+                preferred_rr=active_config.preferred_rr,
+            )
+            if live_target.get("confirmed"):
+                take_profit = round(float(live_target["tp"]), 4)
+                risk_reward_ratio = round(float(live_target["rr"]), 2)
+                return apply_prop_execution_to_setup({
+                    "status": "VALID_TRADE",
+                    "pair": normalized_symbol,
+                    "strategy": PULLBACK_STRATEGY,
+                    "strategies": [PULLBACK_STRATEGY],
+                    "message": "Valid trade setup available",
+                    "bias": trade_side,
+                    "daily_bias": daily_bias,
+                    "h1_bias": h1_bias,
+                    "entry": live_entry,
+                    "sl": stop_loss,
+                    "tp": take_profit,
+                    "risk_reward_ratio": risk_reward_ratio,
+                    "setup_grade": "B",
+                    "setup_type": setup_type,
+                    "session": session_name,
+                    "session_preferred": bool(session_context.get("preferred")),
+                    "confidence": "NORMAL",
+                    "confidence_score": 72,
+                    "invalidation": stop_loss,
+                    "reason": "Trend pullback zone is active and M15 printed an early rejection entry.",
+                    "confluences": [*confluences[:-1], "Early Reaction Entry", confluences[-1]],
+                    "missing": [],
+                    "lifecycle": "entry_reached",
+                    "stalker": None,
+                    "details": {
+                        **common_details,
+                        "confirmation": early_entry,
+                        "target": live_target,
+                    },
+                    "analysis_context": {
+                        **common_context,
+                        "confirmation_time": early_entry.get("time"),
+                    },
+                    "execution_timeframe": "15m",
+                    "execution_state": "confirmed_early",
+                    "execution_model": "HTF trend -> pullback zone -> early M15 rejection",
+                })
         return _no_trade(
             symbol=normalized_symbol,
             reason="Price is in the pullback zone. Waiting for reaction confirmation.",
@@ -294,9 +389,19 @@ def generate_pullback_continuation_setup(
                 },
             },
             analysis_context=common_context,
+            execution_timeframe="15m",
+            execution_state="waiting_for_m15_reaction",
+            execution_model="HTF trend -> pullback zone -> M15 rejection",
         )
 
-    live_entry = round(float(confirmation.get("entry") or latest_price), 4)
+    live_entry = _derive_precision_pullback_entry(
+        trade_side=trade_side,
+        planned_entry=entry,
+        zone_low=float(zone_low),
+        zone_high=float(zone_high),
+        confirmation=confirmation,
+        fallback_entry=float(confirmation.get("entry") or latest_price),
+    )
     live_target = _select_take_profit(
         h1_frame,
         trade_side=trade_side,
@@ -320,13 +425,91 @@ def generate_pullback_continuation_setup(
                 "late_entry": live_entry,
             },
             analysis_context=common_context,
+            execution_timeframe="15m",
+            execution_state="reaction_confirmed_rr_failed",
+            execution_model="HTF trend -> pullback zone -> M15 rejection",
         )
 
     take_profit = round(float(live_target["tp"]), 4)
     risk_reward_ratio = round(float(live_target["rr"]), 2)
     setup_grade = "A+" if risk_reward_ratio >= active_config.preferred_rr and h1_bias == daily_bias else "B"
+    confirmation_mode = str(confirmation.get("mode") or "breakout_reclaim")
+    if stronger_session_confirmation and risk_reward_ratio < 3.25:
+        return _no_trade(
+            symbol=normalized_symbol,
+            reason="Outside prime sessions, the continuation needs stronger expansion potential before it is executable.",
+            daily_bias=daily_bias,
+            h1_bias=h1_bias,
+            session=session_name,
+            missing=["Need stronger RR outside prime session"],
+            status="WAIT_CONFIRMATION",
+            bias=trade_side,
+            entry=entry,
+            sl=stop_loss,
+            tp=take_profit,
+            risk_reward_ratio=risk_reward_ratio,
+            setup_grade=setup_grade,
+            setup_type=setup_type,
+            confidence="MEDIUM",
+            confidence_score=72,
+            invalidation=stop_loss,
+            confluences=[*confluences[:-1], "Prime Session Filter", confluences[-1]],
+            lifecycle="confirmation_watch",
+            stalker={"state": "developing", "score": 78.0, "confirmed_checks": 5, "total_checks": 7},
+            details={
+                **common_details,
+                "confirmation": confirmation,
+                "confirmation_entry": {
+                    "required": ["Stronger expansion potential", "Breakout reclaim confirmation"],
+                    "message": "Outside prime sessions, continuation trades must show more room to expand quickly before they are executable.",
+                },
+            },
+            analysis_context=common_context,
+            execution_timeframe="15m",
+            execution_state="waiting_for_m15_reaction",
+            execution_model="HTF trend -> pullback zone -> stronger expansion filter outside prime session",
+        )
+    if stronger_session_confirmation and confirmation_mode == "reaction_reclaim":
+        return _no_trade(
+            symbol=normalized_symbol,
+            reason="Outside prime sessions, a stronger breakout reclaim confirmation is required.",
+            daily_bias=daily_bias,
+            h1_bias=h1_bias,
+            session=session_name,
+            missing=["Need stronger M15 reclaim outside prime session"],
+            status="WAIT_CONFIRMATION",
+            bias=trade_side,
+            entry=entry,
+            sl=stop_loss,
+            tp=take_profit,
+            risk_reward_ratio=risk_reward_ratio,
+            setup_grade=setup_grade,
+            setup_type=setup_type,
+            confidence="MEDIUM",
+            confidence_score=70,
+            invalidation=stop_loss,
+            confluences=[*confluences[:-1], "Prime Session Filter", confluences[-1]],
+            lifecycle="confirmation_watch",
+            stalker={"state": "developing", "score": 76.0, "confirmed_checks": 5, "total_checks": 7},
+            details={
+                **common_details,
+                "confirmation": confirmation,
+                "confirmation_entry": {
+                    "required": ["Breakout reclaim confirmation", "Close back in trend direction"],
+                    "message": "Outside prime sessions, the pullback needs a stronger reclaim before it is executable.",
+                },
+            },
+            analysis_context=common_context,
+            execution_timeframe="15m",
+            execution_state="waiting_for_m15_reaction",
+            execution_model="HTF trend -> pullback zone -> stronger M15 reclaim outside prime session",
+        )
+    confirmation_confluence = "Breakout Reclaim" if confirmation_mode != "reaction_reclaim" else "Reaction Reclaim"
+    confidence_score = 88 if setup_grade == "A+" else 76
+    if confirmation_mode == "reaction_reclaim":
+        confidence_score -= 4
 
-    return {
+    return apply_prop_execution_to_setup({
         "status": "VALID_TRADE",
         "pair": normalized_symbol,
         "strategy": PULLBACK_STRATEGY,
@@ -343,11 +526,11 @@ def generate_pullback_continuation_setup(
         "setup_type": setup_type,
         "session": session_name,
         "session_preferred": bool(session_context.get("preferred")),
-        "confidence": "HIGH" if setup_grade == "A+" else "NORMAL",
-        "confidence_score": 88 if setup_grade == "A+" else 76,
+        "confidence": "HIGH" if setup_grade == "A+" and confirmation_mode != "reaction_reclaim" else "NORMAL",
+        "confidence_score": confidence_score,
         "invalidation": stop_loss,
         "reason": "Trend, impulse, pullback zone, and M15 reaction all align for continuation.",
-        "confluences": [*confluences[:-1], "Reaction Confirmation", confluences[-1]],
+        "confluences": [*confluences[:-1], confirmation_confluence, confluences[-1]],
         "missing": [],
         "lifecycle": "entry_reached",
         "stalker": None,
@@ -360,13 +543,14 @@ def generate_pullback_continuation_setup(
             **common_context,
             "confirmation_time": confirmation.get("time"),
         },
-    }
+        "execution_timeframe": "15m",
+        "execution_state": "confirmed",
+        "execution_model": "HTF trend -> pullback zone -> M15 rejection",
+    })
 
 
 def _supports_market(symbol: str) -> bool:
-    if symbol == "XAUUSD":
-        return True
-    return len(symbol) == 6 and symbol.isalpha()
+    return supports_live_symbol(symbol)
 
 
 def _detect_session_context(last_time: pd.Timestamp, *, symbol: str) -> dict:
@@ -570,6 +754,7 @@ def _detect_pullback_confirmation(
 
     body_baseline = abs(frame["close"].astype(float) - frame["open"].astype(float)).tail(20).median()
     body_baseline = max(float(body_baseline), 1e-9)
+    zone_mid = (zone_low + zone_high) / 2
     touch_index = None
     for index in range(len(frame) - 1, -1, -1):
         candle = frame.iloc[index]
@@ -593,20 +778,154 @@ def _detect_pullback_confirmation(
             if close_price > open_price and close_price > float(previous["high"]):
                 return {
                     "confirmed": True,
+                    "mode": "breakout_reclaim",
                     "time": pd.Timestamp(candle["time"]).isoformat(),
                     "entry": round(close_price, 4),
+                    "open": round(open_price, 4),
+                    "close": round(close_price, 4),
+                    "high": round(float(candle["high"]), 4),
+                    "low": round(float(candle["low"]), 4),
                     "body_ratio": round(body_ratio, 2),
                 }
         else:
             if close_price < open_price and close_price < float(previous["low"]):
                 return {
                     "confirmed": True,
+                    "mode": "breakdown_reclaim",
                     "time": pd.Timestamp(candle["time"]).isoformat(),
                     "entry": round(close_price, 4),
+                    "open": round(open_price, 4),
+                    "close": round(close_price, 4),
+                    "high": round(float(candle["high"]), 4),
+                    "low": round(float(candle["low"]), 4),
+                    "body_ratio": round(body_ratio, 2),
+                }
+
+    for index in range(max(1, touch_index), len(frame)):
+        candle = frame.iloc[index]
+        previous = frame.iloc[index - 1]
+        open_price = float(candle["open"])
+        close_price = float(candle["close"])
+        high_price = float(candle["high"])
+        low_price = float(candle["low"])
+        candle_range = max(high_price - low_price, 1e-9)
+        close_position = (close_price - low_price) / candle_range
+        body_ratio = abs(close_price - open_price) / body_baseline
+
+        if trade_side == "BUY":
+            soft_confirmed = (
+                close_price > open_price
+                and close_price > zone_mid
+                and close_price > float(previous["close"])
+                and close_position >= 0.57
+                and body_ratio >= max(0.72, minimum_body_ratio * 0.74)
+            )
+            if soft_confirmed:
+                return {
+                    "confirmed": True,
+                    "mode": "reaction_reclaim",
+                    "time": pd.Timestamp(candle["time"]).isoformat(),
+                    "entry": round(close_price, 4),
+                    "open": round(open_price, 4),
+                    "close": round(close_price, 4),
+                    "high": round(high_price, 4),
+                    "low": round(low_price, 4),
+                    "body_ratio": round(body_ratio, 2),
+                }
+        else:
+            soft_confirmed = (
+                close_price < open_price
+                and close_price < zone_mid
+                and close_price < float(previous["close"])
+                and close_position <= 0.43
+                and body_ratio >= max(0.72, minimum_body_ratio * 0.74)
+            )
+            if soft_confirmed:
+                return {
+                    "confirmed": True,
+                    "mode": "reaction_reclaim",
+                    "time": pd.Timestamp(candle["time"]).isoformat(),
+                    "entry": round(close_price, 4),
+                    "open": round(open_price, 4),
+                    "close": round(close_price, 4),
+                    "high": round(high_price, 4),
+                    "low": round(low_price, 4),
                     "body_ratio": round(body_ratio, 2),
                 }
 
     return {"confirmed": False, "touch_time": pd.Timestamp(frame.iloc[touch_index]["time"]).isoformat()}
+
+
+def _detect_early_pullback_entry(
+    data: pd.DataFrame,
+    *,
+    trade_side: str,
+    zone_low: float,
+    zone_high: float,
+    minimum_body_ratio: float,
+) -> dict:
+    frame = data.tail(20).reset_index(drop=True)
+    if len(frame) < 3:
+        return {"confirmed": False}
+
+    body_baseline = abs(frame["close"].astype(float) - frame["open"].astype(float)).tail(12).median()
+    body_baseline = max(float(body_baseline), 1e-9)
+    zone_mid = (zone_low + zone_high) / 2
+
+    for index in range(1, len(frame)):
+        candle = frame.iloc[index]
+        previous = frame.iloc[index - 1]
+        if float(candle["low"]) > zone_high or float(candle["high"]) < zone_low:
+            continue
+
+        open_price = float(candle["open"])
+        close_price = float(candle["close"])
+        high_price = float(candle["high"])
+        low_price = float(candle["low"])
+        candle_range = max(high_price - low_price, 1e-9)
+        close_position = (close_price - low_price) / candle_range
+        body_ratio = abs(close_price - open_price) / body_baseline
+
+        if trade_side == "BUY":
+            if (
+                close_price > open_price
+                and close_price >= zone_mid
+                and close_price >= float(previous["close"])
+                and close_position >= 0.57
+                and body_ratio >= max(0.75, minimum_body_ratio * 0.76)
+            ):
+                return {
+                    "confirmed": True,
+                    "mode": "early_reaction_entry",
+                    "time": pd.Timestamp(candle["time"]).isoformat(),
+                    "entry": round(close_price, 4),
+                    "open": round(open_price, 4),
+                    "close": round(close_price, 4),
+                    "high": round(high_price, 4),
+                    "low": round(low_price, 4),
+                    "body_ratio": round(body_ratio, 2),
+                }
+        else:
+            if (
+                close_price < open_price
+                and close_price <= zone_mid
+                and close_price <= float(previous["close"])
+                and close_position <= 0.43
+                and body_ratio >= max(0.75, minimum_body_ratio * 0.76)
+            ):
+                return {
+                    "confirmed": True,
+                    "mode": "early_reaction_entry",
+                    "time": pd.Timestamp(candle["time"]).isoformat(),
+                    "entry": round(close_price, 4),
+                    "open": round(open_price, 4),
+                    "close": round(close_price, 4),
+                    "high": round(high_price, 4),
+                    "low": round(low_price, 4),
+                    "body_ratio": round(body_ratio, 2),
+                }
+
+    return {"confirmed": False}
 
 
 def _select_take_profit(
@@ -650,6 +969,42 @@ def _select_take_profit(
     if fallback is not None:
         return fallback
     return {"confirmed": False, "reason": "RR below 1:2"}
+
+
+def _derive_precision_pullback_entry(
+    *,
+    trade_side: str,
+    planned_entry: float,
+    zone_low: float,
+    zone_high: float,
+    confirmation: dict,
+    fallback_entry: float,
+) -> float:
+    close_price = float(confirmation.get("close") or fallback_entry)
+    open_price = float(confirmation.get("open") or close_price)
+    high_price = float(confirmation.get("high") or max(open_price, close_price))
+    low_price = float(confirmation.get("low") or min(open_price, close_price))
+    candle_range = max(high_price - low_price, 1e-9)
+    body = abs(close_price - open_price)
+    zone_mid = (zone_low + zone_high) / 2
+
+    if trade_side == "BUY":
+        reclaim_floor = max(planned_entry, zone_mid, open_price + (body * 0.2), low_price + (candle_range * 0.35))
+        reclaim_ceiling = close_price - max(body * 0.12, candle_range * 0.08)
+        if reclaim_floor > reclaim_ceiling:
+            reclaim_floor = min(reclaim_floor, close_price)
+            reclaim_ceiling = max(reclaim_floor, reclaim_ceiling)
+        candidate = min(max(reclaim_floor, planned_entry), reclaim_ceiling)
+        candidate = max(candidate, planned_entry)
+    else:
+        reclaim_ceiling = min(planned_entry, zone_mid, open_price - (body * 0.2), high_price - (candle_range * 0.35))
+        reclaim_floor = close_price + max(body * 0.12, candle_range * 0.08)
+        if reclaim_floor > reclaim_ceiling:
+            reclaim_ceiling = max(reclaim_floor, min(planned_entry, open_price))
+        candidate = max(min(reclaim_ceiling, planned_entry), reclaim_floor)
+        candidate = min(candidate, planned_entry)
+
+    return round(float(candidate or fallback_entry), 4)
 
 
 def _find_target_levels(data: pd.DataFrame, *, trade_side: str, entry: float) -> list[dict]:
@@ -702,10 +1057,13 @@ def _no_trade(
     lifecycle: str = "no_trade",
     stalker: dict | None = None,
     analysis_context: dict | None = None,
+    execution_timeframe: str | None = None,
+    execution_state: str | None = None,
+    execution_model: str | None = None,
 ) -> dict:
     merged_context = {"session": session} if session else {}
     merged_context.update(analysis_context or {})
-    return {
+    return apply_prop_execution_to_setup({
         "status": status,
         "pair": symbol,
         "strategy": PULLBACK_STRATEGY,
@@ -731,4 +1089,7 @@ def _no_trade(
         "stalker": stalker,
         "details": details or {},
         "analysis_context": merged_context,
-    }
+        "execution_timeframe": execution_timeframe,
+        "execution_state": execution_state,
+        "execution_model": execution_model,
+    })
