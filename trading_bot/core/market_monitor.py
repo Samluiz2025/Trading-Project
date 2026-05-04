@@ -1,8 +1,8 @@
 """
 market_monitor.py
 ─────────────────────────────────────────────────────────────────────────────
-Scans all approved symbols, enforces daily setup cap (5),
-filters by quality score, and dispatches alerts.
+Scans all approved symbols, filters by quality score, dispatches alerts,
+and periodically resolves open journal entries to WIN/LOSS.
 ─────────────────────────────────────────────────────────────────────────────
 """
 
@@ -19,6 +19,9 @@ from .data_fetcher import fetch_all_timeframes
 
 logger = logging.getLogger(__name__)
 
+# Resolve open outcomes every N scan cycles
+RESOLVE_EVERY_N_CYCLES = 10
+
 
 class MarketMonitor:
     def __init__(self, source: str = "auto", poll_seconds: int = 30):
@@ -28,8 +31,7 @@ class MarketMonitor:
         self._daily_date   = date.today()
         self._callbacks: list[Callable[[SetupResult], None]] = []
         self._running      = False
-
-    # ── Daily count management ────────────────────────────────────────────────
+        self._cycle_count  = 0
 
     def _reset_if_new_day(self):
         today = date.today()
@@ -38,17 +40,8 @@ class MarketMonitor:
             self._daily_count = 0
             self._daily_date  = today
 
-    def _at_cap(self) -> bool:
-        self._reset_if_new_day()
-        return self._daily_count >= MAX_DAILY_SETUPS
-
-    # ── Callback registration ─────────────────────────────────────────────────
-
     def on_valid_setup(self, cb: Callable[[SetupResult], None]):
-        """Register a callback that fires for every VALID setup."""
         self._callbacks.append(cb)
-
-    # ── Core scan ─────────────────────────────────────────────────────────────
 
     def scan_symbol(self, symbol: str) -> SetupResult:
         self._reset_if_new_day()
@@ -71,7 +64,6 @@ class MarketMonitor:
         return result
 
     def scan_all(self) -> list[SetupResult]:
-        """Scan all approved symbols. Returns list of all results."""
         results = []
         for symbol in APPROVED_SYMBOLS:
             try:
@@ -86,16 +78,32 @@ class MarketMonitor:
                 logger.error("Error scanning %s: %s", symbol, e)
         return results
 
+    def _run_outcome_resolver(self):
+        try:
+            from .outcome_resolver import resolve_open_outcomes
+            resolved = resolve_open_outcomes(self.source)
+            if resolved:
+                logger.info("Outcome resolver: %d trade(s) closed (WIN/LOSS)", resolved)
+        except Exception as e:
+            logger.warning("Outcome resolver error: %s", e)
+
     def run(self):
-        """Blocking poll loop."""
         self._running = True
         logger.info("MarketMonitor started. Poll: %ds | Source: %s",
                     self.poll_seconds, self.source)
+        # Resolve any stale open outcomes on startup
+        self._run_outcome_resolver()
+
         while self._running:
             try:
                 self.scan_all()
             except Exception as e:
                 logger.error("Scan cycle error: %s", e)
+
+            self._cycle_count += 1
+            if self._cycle_count % RESOLVE_EVERY_N_CYCLES == 0:
+                self._run_outcome_resolver()
+
             time.sleep(self.poll_seconds)
 
     def stop(self):

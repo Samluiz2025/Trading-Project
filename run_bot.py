@@ -34,17 +34,24 @@ def main():
     def on_setup(result):
         send_setup_alert(result)
         append_journal({
-            "symbol":  result.symbol,
-            "bias":    result.bias,
-            "entry":   result.entry,
-            "sl":      result.sl,
-            "tp":      result.tp,
-            "rr":      result.rr,
-            "score":   result.quality_score,
-            "confidence": result.confidence,
-            "confluences": result.confluences,
-            "timestamp": result.timestamp,
-            "outcome": "OPEN",
+            "symbol":       result.symbol,
+            "bias":         result.bias,
+            "entry":        result.entry,
+            "sl":           result.sl,
+            "tp":           result.tp,
+            "rr":           result.rr,
+            "score":        result.quality_score,
+            "confidence":   result.confidence,
+            "confluences":  result.confluences,
+            "timestamp":    result.timestamp,
+            "outcome":      "OPEN",
+            "strategy":     "Sweep Reversal",
+            "forward_test_mode": os.getenv("FORWARD_TEST_MODE", "false").lower() == "true",
+            "forward_test_name": os.getenv("FORWARD_TEST_NAME", ""),
+            "session":      result.session,
+            "daily_bias":   result.daily_bias,
+            "adx":          result.adx,
+            "rsi":          result.rsi,
         })
 
     monitor.on_valid_setup(on_setup)

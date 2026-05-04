@@ -1,7 +1,8 @@
 """
-performance_tracker.py – Win rate, profit factor, streaks
+performance_tracker.py – Win rate, profit factor, streaks, per-pair & per-strategy breakdown
 """
 from __future__ import annotations
+from collections import defaultdict
 
 
 def compute_performance(entries: list[dict]) -> dict:
@@ -19,12 +20,11 @@ def compute_performance(entries: list[dict]) -> dict:
         (len(wins) * avg_rr_win) / max(len(losses) * 1, 1), 2
     ) if losses else float("inf")
 
-    # Streak
-    streak, max_streak = 0, 0
+    # Current win streak
+    streak = 0
     for e in reversed(closed):
         if e["outcome"] == "WIN":
             streak += 1
-            max_streak = max(max_streak, streak)
         else:
             break
 
@@ -37,5 +37,57 @@ def compute_performance(entries: list[dict]) -> dict:
         "avg_rr_win":     avg_rr_win,
         "profit_factor":  profit_factor,
         "current_streak": streak,
-        "max_win_streak": max_streak,
+        "per_pair":       _per_pair(closed),
+        "per_strategy":   _per_strategy(closed),
+        "per_session":    _per_session(closed),
+        "recent_trades":  _recent(closed, 20),
     }
+
+
+def _bucket(entries: list[dict], key: str) -> dict:
+    buckets: dict[str, list[dict]] = defaultdict(list)
+    for e in entries:
+        buckets[e.get(key, "Unknown")].append(e)
+    result = {}
+    for label, trades in sorted(buckets.items()):
+        w = sum(1 for t in trades if t["outcome"] == "WIN")
+        l = sum(1 for t in trades if t["outcome"] == "LOSS")
+        total = w + l
+        result[label] = {
+            "trades": total,
+            "wins":   w,
+            "losses": l,
+            "win_rate_pct": round(w / total * 100, 1) if total else 0,
+            "avg_rr": round(
+                sum(t.get("rr", 0) for t in trades if t["outcome"] == "WIN") / w, 2
+            ) if w else 0,
+        }
+    return result
+
+
+def _per_pair(closed: list[dict]) -> dict:
+    return _bucket(closed, "symbol")
+
+
+def _per_strategy(closed: list[dict]) -> dict:
+    return _bucket(closed, "strategy")
+
+
+def _per_session(closed: list[dict]) -> dict:
+    return _bucket(closed, "session")
+
+
+def _recent(closed: list[dict], n: int) -> list[dict]:
+    return [
+        {
+            "symbol":     e.get("symbol"),
+            "bias":       e.get("bias"),
+            "outcome":    e.get("outcome"),
+            "score":      e.get("score"),
+            "rr":         e.get("rr"),
+            "strategy":   e.get("strategy"),
+            "timestamp":  e.get("timestamp"),
+            "closed_at":  e.get("closed_at"),
+        }
+        for e in closed[-n:]
+    ]

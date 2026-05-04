@@ -18,6 +18,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from trading_bot.core.data_fetcher import fetch_all_timeframes, fetch_ohlcv
 from trading_bot.core.strategy_strict_liquidity import analyze, APPROVED_SYMBOLS
 from trading_bot.core.alert_system import send_setup_alert
+from trading_bot.core.performance_tracker import compute_performance
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -236,44 +237,35 @@ def get_alerts(limit: int = Query(default=30)):
 
 @app.get("/performance")
 def get_performance():
-    entries = _load_json(JOURNAL_FILE, [])
-    closed  = [e for e in entries if e.get("status") in ("WIN","LOSS")]
-    wins    = [e for e in closed if e.get("result","").upper() == "WIN"]
-    losses  = [e for e in closed if e.get("result","").upper() == "LOSS"]
-    wr      = round(len(wins)/len(closed)*100, 1) if closed else 0
-    total_r = sum(float(e.get("rr_achieved", 0) or 0) for e in wins) - len(losses)
-    pf      = round(abs(sum(float(e.get("rr_achieved",1) or 1) for e in wins) /
-              max(len(losses), 1)), 2)
-    scanner = _scan_cache
-    valid_count = len([s for s in scanner.get("symbols",[]) if s.get("status")=="VALID_TRADE"])
+    entries     = _load_json(JOURNAL_FILE, [])
+    perf        = compute_performance(entries)
+    scanner     = _scan_cache
+    valid_count = len([s for s in scanner.get("symbols", []) if s.get("status") == "VALID_TRADE"])
     return JSONResponse({
-        "total_trades": len(entries),
-        "closed_trades": len(closed),
-        "open_trades": len(entries) - len(closed),
-        "pending_open_trades": 0,
-        "win_rate": wr,
-        "profit_factor": pf,
-        "expectancy_r": round(total_r / max(len(closed), 1), 2),
+        "total_trades":   len(entries),
+        "closed_trades":  perf["total_trades"],
+        "open_trades":    perf["open"],
+        "wins":           perf["wins"],
+        "losses":         perf["losses"],
+        "win_rate":       perf["win_rate_pct"],
+        "profit_factor":  perf["profit_factor"],
+        "avg_rr_win":     perf["avg_rr_win"],
+        "current_streak": perf["current_streak"],
+        "per_pair":       perf["per_pair"],
+        "per_strategy":   perf["per_strategy"],
+        "per_session":    perf["per_session"],
+        "recent_trades":  perf["recent_trades"],
         "scan_diagnostics": {
-            "evaluated_symbols": len(APPROVED_SYMBOLS),
-            "valid_candidates": valid_count,
-            "selected_count": valid_count,
-            "blocked_count": 0,
-            "rejected_count": len(APPROVED_SYMBOLS) - valid_count,
-            "selected_candidates": [s for s in scanner.get("symbols",[]) if s.get("status")=="VALID_TRADE"],
+            "evaluated_symbols":  len(APPROVED_SYMBOLS),
+            "valid_candidates":   valid_count,
+            "selected_candidates": [s for s in scanner.get("symbols", []) if s.get("status") == "VALID_TRADE"],
         },
         "scanner_health": {
-            "status": "healthy" if scanner.get("updated_at") else "idle",
+            "status":              "healthy" if scanner.get("updated_at") else "idle",
             "last_successful_scan": scanner.get("updated_at", "-"),
-            "total_symbols": len(APPROVED_SYMBOLS),
-            "completed_symbols": len(scanner.get("symbols", [])),
+            "total_symbols":       len(APPROVED_SYMBOLS),
+            "completed_symbols":   len(scanner.get("symbols", [])),
         },
-        "edge_control": {"locked": False, "open_positions": {"total": 0, "stale": 0}},
-        "validation": {"validated_closed_trades": len(closed)},
-        "calibration": {},
-        "shadow_tracking": {},
-        "execution_agent": {"broker_draft_count": 0,
-                             "promotion_gate": {"status": "MONITORING"}},
     })
 
 
