@@ -61,7 +61,7 @@ class MarketMonitor:
             df_m15      = tfs["m15"],
             daily_count = self._daily_count,
         )
-        if result.status == "VALID":
+        if result.status == "VALID_TRADE":
             self._daily_count += 1
             for cb in self._callbacks:
                 try:

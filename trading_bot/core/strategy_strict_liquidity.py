@@ -378,11 +378,6 @@ def analyze(
             quality_score=score, adx=adx, rsi=rsi, atr=atr,
         )
 
-    if not _cooldown_ok(symbol, bias):
-        return no_trade([f"Cooldown ({REFIRE_COOLDOWN_H}h)"],
-                        "Same direction fired recently.", db, h4b, h1s, price, session_name)
-
-    _mark_fired(symbol, bias)
     confluences.append(f"RR 1:{rr}")
     if session_name != "Off-session":
         confluences.append(f"Session: {session_name}")

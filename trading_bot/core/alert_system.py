@@ -5,12 +5,25 @@ from __future__ import annotations
 import logging
 import os
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 ALERTS_FILE = DATA_DIR / "alerts.json"
+
+REFIRE_COOLDOWN_H = 2
+_last_fired: dict[str, datetime] = {}
+
+
+def _cooldown_ok(sym: str, bias: str) -> bool:
+    key = f"{sym}_{bias}"
+    last = _last_fired.get(key)
+    return last is None or datetime.now(timezone.utc) - last > timedelta(hours=REFIRE_COOLDOWN_H)
+
+
+def _mark_fired(sym: str, bias: str):
+    _last_fired[f"{sym}_{bias}"] = datetime.now(timezone.utc)
 
 
 def _save_alert(payload: dict):
@@ -42,9 +55,13 @@ def _send_telegram(message: str):
 
 
 def send_setup_alert(result) -> None:
-    """Dispatch alert for a VALID SetupResult."""
+    """Dispatch alert for a VALID SetupResult. Enforces per-symbol cooldown."""
     if result.status not in ("VALID", "VALID_TRADE"):
         return
+    if not _cooldown_ok(result.symbol, result.bias):
+        logger.debug("Cooldown active for %s %s — skipping Telegram", result.symbol, result.bias)
+        return
+    _mark_fired(result.symbol, result.bias)
 
     emoji = "🟢" if result.bias == "BUY" else "🔴"
     conf_icons = {"ELITE": "⭐⭐⭐", "HIGH": "⭐⭐", "MEDIUM": "⭐", "LOW": ""}
