@@ -26,8 +26,8 @@ def _save_alert(payload: dict):
 
 
 def _send_telegram(message: str):
-    token   = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    token   = os.getenv("TELEGRAM_VALID_BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.getenv("TELEGRAM_VALID_CHAT_ID")   or os.getenv("TELEGRAM_CHAT_ID", "")
     if not token or not chat_id:
         return
     try:
@@ -43,7 +43,7 @@ def _send_telegram(message: str):
 
 def send_setup_alert(result) -> None:
     """Dispatch alert for a VALID SetupResult."""
-    if result.status != "VALID":
+    if result.status not in ("VALID", "VALID_TRADE"):
         return
 
     emoji = "🟢" if result.bias == "BUY" else "🔴"

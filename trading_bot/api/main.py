@@ -17,6 +17,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from trading_bot.core.data_fetcher import fetch_all_timeframes, fetch_ohlcv
 from trading_bot.core.strategy_strict_liquidity import analyze, APPROVED_SYMBOLS
+from trading_bot.core.alert_system import send_setup_alert
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -92,9 +93,10 @@ def _run_analysis(symbol: str, source: str = "auto") -> dict:
         d["chart_overlays"] = {}
         d["risk_reward_ratio"] = result.rr
         d["final_bias"] = result.bias or result.daily_bias or "NEUTRAL"
-        # Map status for frontend
+        # Map status for frontend; fire Telegram alert on valid trades
         if d.get("status") == "VALID_TRADE":
             d["final_bias"] = result.bias or "NEUTRAL"
+            send_setup_alert(result)
         d["stalker"] = {
             "state": _stalk_state(result),
             "score": result.quality_score,
