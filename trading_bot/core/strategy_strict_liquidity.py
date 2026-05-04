@@ -314,9 +314,6 @@ def analyze(
             latest_price=price, session=sess,
         )
 
-    if daily_count >= MAX_DAILY_SETUPS:
-        return no_trade([], f"Daily cap of {MAX_DAILY_SETUPS} reached.")
-
     # Data check — be lenient, mock fills gaps anyway
     for name, df, mn in [("Daily",df_daily,30),("H4",df_h4,20),("H1",df_h1,25),("M15",df_m15,25)]:
         if df is None or len(df) < mn:

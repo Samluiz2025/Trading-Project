@@ -74,9 +74,6 @@ class MarketMonitor:
         """Scan all approved symbols. Returns list of all results."""
         results = []
         for symbol in APPROVED_SYMBOLS:
-            if self._at_cap():
-                logger.info("Daily cap reached – skipping remaining symbols.")
-                break
             try:
                 result = self.scan_symbol(symbol)
                 results.append(result)
