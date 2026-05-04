@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 ALERTS_FILE = DATA_DIR / "alerts.json"
 
-REFIRE_COOLDOWN_H = 2
+REFIRE_COOLDOWN_H = 1
 _last_fired: dict[str, datetime] = {}
 
 

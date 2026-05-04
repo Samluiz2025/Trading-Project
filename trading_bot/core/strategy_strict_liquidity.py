@@ -25,10 +25,7 @@ LONDON_CLOSE = 12
 NY_OPEN      = 12
 NY_CLOSE     = 20
 
-APPROVED_SYMBOLS = [
-    "ETHUSDT","GBPUSD","EURUSD","BTCUSDT",
-    "XAUUSD","NAS100","USDCHF","USDJPY",
-]
+from .instrument_universe import APPROVED_SYMBOLS  # noqa: E402 — used by market_monitor & main
 
 
 @dataclass
