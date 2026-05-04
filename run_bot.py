@@ -7,6 +7,7 @@ import argparse
 import logging
 import sys
 import os
+from datetime import datetime, timezone, timedelta
 
 logging.basicConfig(
     level=logging.INFO,
@@ -14,6 +15,9 @@ logging.basicConfig(
     handlers=[logging.StreamHandler(sys.stdout)],
 )
 logger = logging.getLogger("run_bot")
+
+# Only log a new journal entry for the same symbol+direction after this window
+JOURNAL_COOLDOWN_H = 4
 
 
 def main():
@@ -31,28 +35,41 @@ def main():
 
     monitor = MarketMonitor(source=args.source, poll_seconds=args.poll_seconds)
 
+    # Tracks last journal log time per (symbol, bias) to prevent duplicates
+    _journal_last: dict[str, datetime] = {}
+
+    def _journal_ok(symbol: str, bias: str) -> bool:
+        key  = f"{symbol}_{bias}"
+        last = _journal_last.get(key)
+        if last and datetime.now(timezone.utc) - last < timedelta(hours=JOURNAL_COOLDOWN_H):
+            return False
+        _journal_last[key] = datetime.now(timezone.utc)
+        return True
+
     def on_setup(result):
         send_setup_alert(result)
-        append_journal({
-            "symbol":       result.symbol,
-            "bias":         result.bias,
-            "entry":        result.entry,
-            "sl":           result.sl,
-            "tp":           result.tp,
-            "rr":           result.rr,
-            "score":        result.quality_score,
-            "confidence":   result.confidence,
-            "confluences":  result.confluences,
-            "timestamp":    result.timestamp,
-            "outcome":      "OPEN",
-            "strategy":     "Sweep Reversal",
-            "forward_test_mode": os.getenv("FORWARD_TEST_MODE", "false").lower() == "true",
-            "forward_test_name": os.getenv("FORWARD_TEST_NAME", ""),
-            "session":      result.session,
-            "daily_bias":   result.daily_bias,
-            "adx":          result.adx,
-            "rsi":          result.rsi,
-        })
+        if _journal_ok(result.symbol, result.bias):
+            append_journal({
+                "symbol":            result.symbol,
+                "bias":              result.bias,
+                "entry":             result.entry,
+                "sl":                result.sl,
+                "tp":                result.tp,
+                "rr":                result.rr,
+                "score":             result.quality_score,
+                "confidence":        result.confidence,
+                "confluences":       result.confluences,
+                "timestamp":         result.timestamp,
+                "outcome":           "OPEN",
+                "strategy":          "Sweep Reversal",
+                "forward_test_mode": os.getenv("FORWARD_TEST_MODE", "false").lower() == "true",
+                "forward_test_name": os.getenv("FORWARD_TEST_NAME", ""),
+                "session":           result.session,
+                "daily_bias":        result.daily_bias,
+                "adx":               result.adx,
+                "rsi":               result.rsi,
+            })
+            logger.info("Journal: logged %s %s (score=%d)", result.symbol, result.bias, result.quality_score)
 
     monitor.on_valid_setup(on_setup)
 
