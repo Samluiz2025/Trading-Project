@@ -29,21 +29,51 @@ def _cache_set(sym: str, interval: str, df):
     _DATA_CACHE[(sym, interval)] = (time.time(), df)
 
 
-CRYPTO_SYMBOLS = {"BTCUSDT", "ETHUSDT"}
-FOREX_SYMBOLS  = {"GBPUSD", "EURUSD", "USDCHF", "USDJPY"}
-METAL_SYMBOLS  = {"XAUUSD"}
-INDEX_SYMBOLS  = {"NAS100", "US100"}
+CRYPTO_SYMBOLS = {"BTCUSDT", "ETHUSDT", "SOLUSDT", "BNBUSDT", "XRPUSDT"}
+FOREX_SYMBOLS  = {
+    "EURUSD","GBPUSD","AUDUSD","NZDUSD","USDCAD","USDCHF","USDJPY",
+    "EURGBP","EURCHF","EURAUD","EURCAD","EURJPY","EURNZD",
+    "GBPJPY","GBPCHF","GBPAUD","GBPNZD","GBPCAD",
+    "AUDJPY","AUDNZD","AUDCAD","AUDCHF",
+    "CADJPY","CADCHF","CHFJPY",
+    "NZDJPY","NZDCAD","NZDCHF",
+}
+METAL_SYMBOLS  = {"XAUUSD", "XAGUSD", "USOIL"}
+INDEX_SYMBOLS  = {"NAS100", "US100", "SP500", "US30", "GER40", "UK100", "JPN225", "JP225"}
 
 YFINANCE_MAP = {
-    "GBPUSD":  "GBPUSD=X",
-    "EURUSD":  "EURUSD=X",
-    "USDCHF":  "USDCHF=X",
+    # Major forex pairs
+    "EURUSD":  "EURUSD=X",   "GBPUSD":  "GBPUSD=X",
+    "AUDUSD":  "AUDUSD=X",   "NZDUSD":  "NZDUSD=X",
+    "USDCAD":  "USDCAD=X",   "USDCHF":  "USDCHF=X",
     "USDJPY":  "USDJPY=X",
-    "XAUUSD":  "GC=F",
-    "NAS100":  "NQ=F",
-    "US100":   "NQ=F",
-    "BTCUSDT": "BTC-USD",
-    "ETHUSDT": "ETH-USD",
+    # EUR crosses
+    "EURGBP":  "EURGBP=X",   "EURCHF":  "EURCHF=X",
+    "EURAUD":  "EURAUD=X",   "EURCAD":  "EURCAD=X",
+    "EURJPY":  "EURJPY=X",   "EURNZD":  "EURNZD=X",
+    # GBP crosses
+    "GBPJPY":  "GBPJPY=X",   "GBPCHF":  "GBPCHF=X",
+    "GBPAUD":  "GBPAUD=X",   "GBPNZD":  "GBPNZD=X",
+    "GBPCAD":  "GBPCAD=X",
+    # AUD crosses
+    "AUDJPY":  "AUDJPY=X",   "AUDNZD":  "AUDNZD=X",
+    "AUDCAD":  "AUDCAD=X",   "AUDCHF":  "AUDCHF=X",
+    # CAD/CHF/NZD crosses
+    "CADJPY":  "CADJPY=X",   "CADCHF":  "CADCHF=X",
+    "CHFJPY":  "CHFJPY=X",   "NZDJPY":  "NZDJPY=X",
+    "NZDCAD":  "NZDCAD=X",   "NZDCHF":  "NZDCHF=X",
+    # Metals & commodities
+    "XAUUSD":  "GC=F",       "XAGUSD":  "SI=F",
+    "USOIL":   "CL=F",
+    # Indices
+    "NAS100":  "NQ=F",       "US100":   "NQ=F",
+    "SP500":   "ES=F",       "US30":    "YM=F",
+    "GER40":   "GDAXI",      "UK100":   "^FTSE",
+    "JPN225":  "NKD=F",      "JP225":   "NKD=F",
+    # Crypto (Binance handles these natively; fallback for yfinance)
+    "BTCUSDT": "BTC-USD",    "ETHUSDT": "ETH-USD",
+    "SOLUSDT": "SOL-USD",    "BNBUSDT": "BNB-USD",
+    "XRPUSDT": "XRP-USD",
 }
 
 _YF_INTERVALS = {
