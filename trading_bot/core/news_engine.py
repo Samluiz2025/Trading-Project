@@ -10,6 +10,126 @@ from xml.etree import ElementTree
 
 import requests
 
+# ── Built-in 2026 high-impact calendar (no API key required) ─────────────────
+# Format: (YYYY, M, D, H, M_min, "Currency", "Event name")
+_BUILTIN_2026_EVENTS: list[tuple] = [
+    # NFP — first Friday of each month, 12:30 UTC
+    (2026, 6,  5, 12, 30, "USD", "Non-Farm Payrolls"),
+    (2026, 7, 10, 12, 30, "USD", "Non-Farm Payrolls"),
+    (2026, 8,  7, 12, 30, "USD", "Non-Farm Payrolls"),
+    (2026, 9,  4, 12, 30, "USD", "Non-Farm Payrolls"),
+    (2026,10,  2, 12, 30, "USD", "Non-Farm Payrolls"),
+    (2026,11,  6, 12, 30, "USD", "Non-Farm Payrolls"),
+    (2026,12,  4, 12, 30, "USD", "Non-Farm Payrolls"),
+    # US CPI — ~13th of each month, 12:30 UTC
+    (2026, 5, 13, 12, 30, "USD", "US CPI"),
+    (2026, 6, 11, 12, 30, "USD", "US CPI"),
+    (2026, 7, 14, 12, 30, "USD", "US CPI"),
+    (2026, 8, 13, 12, 30, "USD", "US CPI"),
+    (2026, 9, 12, 12, 30, "USD", "US CPI"),
+    (2026,10, 14, 12, 30, "USD", "US CPI"),
+    (2026,11, 13, 12, 30, "USD", "US CPI"),
+    (2026,12, 11, 12, 30, "USD", "US CPI"),
+    # FOMC rate decision — 18:00 UTC
+    (2026, 6, 10, 18,  0, "USD", "FOMC Rate Decision"),
+    (2026, 7, 29, 18,  0, "USD", "FOMC Rate Decision"),
+    (2026, 9, 16, 18,  0, "USD", "FOMC Rate Decision"),
+    (2026,10, 29, 18,  0, "USD", "FOMC Rate Decision"),
+    (2026,12, 10, 18,  0, "USD", "FOMC Rate Decision"),
+    # US GDP (advance) — quarterly, 12:30 UTC
+    (2026, 7, 29, 12, 30, "USD", "US GDP Advance"),
+    (2026,10, 29, 12, 30, "USD", "US GDP Advance"),
+    # ECB rate decision — Thursday, 12:15 UTC
+    (2026, 6,  4, 12, 15, "EUR", "ECB Rate Decision"),
+    (2026, 7, 23, 12, 15, "EUR", "ECB Rate Decision"),
+    (2026, 9, 10, 12, 15, "EUR", "ECB Rate Decision"),
+    (2026,10, 22, 12, 15, "EUR", "ECB Rate Decision"),
+    (2026,12, 10, 12, 15, "EUR", "ECB Rate Decision"),
+    # BoE rate decision — Thursday, 12:00 UTC
+    (2026, 5,  7, 12,  0, "GBP", "BoE Rate Decision"),
+    (2026, 6, 18, 12,  0, "GBP", "BoE Rate Decision"),
+    (2026, 8,  6, 12,  0, "GBP", "BoE Rate Decision"),
+    (2026, 9, 17, 12,  0, "GBP", "BoE Rate Decision"),
+    (2026,11,  5, 12,  0, "GBP", "BoE Rate Decision"),
+    (2026,12, 17, 12,  0, "GBP", "BoE Rate Decision"),
+    # RBA rate decision — first Tuesday of month, 03:30 UTC
+    (2026, 5,  5,  3, 30, "AUD", "RBA Rate Decision"),
+    (2026, 6,  2,  3, 30, "AUD", "RBA Rate Decision"),
+    (2026, 7,  7,  3, 30, "AUD", "RBA Rate Decision"),
+    (2026, 8,  4,  3, 30, "AUD", "RBA Rate Decision"),
+    (2026, 9,  1,  3, 30, "AUD", "RBA Rate Decision"),
+    (2026,11,  3,  3, 30, "AUD", "RBA Rate Decision"),
+    (2026,12,  1,  3, 30, "AUD", "RBA Rate Decision"),
+    # Bank of Japan — irregular, approximate
+    (2026, 6, 16, 3,   0, "JPY", "BoJ Rate Decision"),
+    (2026, 7, 28, 3,   0, "JPY", "BoJ Rate Decision"),
+    (2026, 9, 18, 3,   0, "JPY", "BoJ Rate Decision"),
+    (2026,10, 27, 3,   0, "JPY", "BoJ Rate Decision"),
+    (2026,12, 18, 3,   0, "JPY", "BoJ Rate Decision"),
+    # US PCE — last Friday of month, 12:30 UTC
+    (2026, 5, 29, 12, 30, "USD", "US PCE"),
+    (2026, 6, 26, 12, 30, "USD", "US PCE"),
+    (2026, 7, 31, 12, 30, "USD", "US PCE"),
+    (2026, 8, 28, 12, 30, "USD", "US PCE"),
+    (2026, 9, 25, 12, 30, "USD", "US PCE"),
+    (2026,10, 30, 12, 30, "USD", "US PCE"),
+    (2026,11, 27, 12, 30, "USD", "US PCE"),
+    (2026,12, 18, 12, 30, "USD", "US PCE"),
+]
+
+
+class BuiltInCalendarProvider:
+    """Zero-config provider using hardcoded 2026 high-impact schedule."""
+
+    def fetch_events(
+        self,
+        currencies: list[str],
+        start_time: datetime,
+        end_time: datetime,
+    ) -> list[EconomicEvent]:
+        currency_filter = {c.upper() for c in currencies}
+        events: list[EconomicEvent] = []
+        for (yr, mo, dy, hr, mn, ccy, name) in _BUILTIN_2026_EVENTS:
+            if ccy not in currency_filter:
+                continue
+            event_time = datetime(yr, mo, dy, hr, mn, tzinfo=UTC)
+            if not (start_time <= event_time <= end_time):
+                continue
+            events.append(EconomicEvent(
+                event_name=name,
+                currency=ccy,
+                impact="high",
+                time=event_time,
+                market_moving=True,
+                impact_score=4,
+            ))
+        events.sort(key=lambda e: e.time)
+        return events
+
+
+class _CompositeProvider:
+    """Merges events from multiple providers, deduplicating by (currency, name, hour)."""
+
+    def __init__(self, providers: list) -> None:
+        self._providers = providers
+
+    def fetch_events(
+        self,
+        currencies: list[str],
+        start_time: datetime,
+        end_time: datetime,
+    ) -> list[EconomicEvent]:
+        seen: set[tuple] = set()
+        merged: list[EconomicEvent] = []
+        for provider in self._providers:
+            for event in provider.fetch_events(currencies, start_time, end_time):
+                key = (event.currency, event.event_name, event.time.replace(minute=0, second=0, microsecond=0))
+                if key not in seen:
+                    seen.add(key)
+                    merged.append(event)
+        merged.sort(key=lambda e: e.time)
+        return merged
+
 
 BiasLabel = str
 
@@ -477,22 +597,15 @@ def load_symbol_news_context(
     default_path = Path(__file__).resolve().parents[1] / "data" / "economic_calendar.json"
     active_path = Path(calendar_path) if calendar_path is not None else default_path
     if live_provider.is_configured():
-        provider: EconomicCalendarProvider | None = live_provider
+        provider: EconomicCalendarProvider = live_provider
+        provider_label = "tradingeconomics"
     elif active_path.exists():
-        provider = JsonEconomicCalendarProvider(active_path)
+        # Merge local JSON overrides with the built-in schedule
+        provider = _CompositeProvider([JsonEconomicCalendarProvider(active_path), BuiltInCalendarProvider()])
+        provider_label = "local_json+builtin"
     else:
-        provider = None
-
-    if provider is None:
-        return {
-            "configured": False,
-            "events": [],
-            "ranked_events": [],
-            "pair_news_bias": "neutral",
-            "news_lock": {"locked": False, "events": [], "window_minutes": 30},
-            "headlines": fetch_live_headlines(symbol),
-            "provider": "headlines_only",
-        }
+        provider = BuiltInCalendarProvider()
+        provider_label = "builtin_2026"
 
     currencies = list(split_symbol_currencies(symbol))
     events = fetch_market_moving_events(provider=provider, currencies=currencies, current_time=current_time)
@@ -504,7 +617,7 @@ def load_symbol_news_context(
         "pair_news_bias": get_pair_news_bias(symbol, bias_by_currency),
         "news_lock": get_news_lock(symbol, events, current_time=current_time),
         "headlines": fetch_live_headlines(symbol),
-        "provider": "tradingeconomics" if isinstance(provider, TradingEconomicsCalendarProvider) else "local_json",
+        "provider": provider_label,
     }
 
 

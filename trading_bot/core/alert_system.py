@@ -54,13 +54,35 @@ def _send_telegram(message: str):
         logger.warning("Telegram send failed: %s", e)
 
 
+def _news_lock_check(symbol: str) -> tuple[bool, str]:
+    """Return (is_locked, reason). Never crashes — safe to call always."""
+    try:
+        from .news_engine import load_symbol_news_context
+        ctx  = load_symbol_news_context(symbol)
+        lock = ctx.get("news_lock", {})
+        if lock.get("locked"):
+            ev   = lock["events"][0]
+            mins = ev["minutes_from_now"]
+            direction = "in" if mins > 0 else "just released"
+            return True, f"{ev['event_name']} ({ev['currency']}) {direction} {abs(mins):.0f}min"
+    except Exception as e:
+        logger.debug("News lock check failed for %s: %s", symbol, e)
+    return False, ""
+
+
 def send_setup_alert(result) -> None:
-    """Dispatch alert for a VALID SetupResult. Enforces per-symbol cooldown."""
+    """Dispatch alert for a VALID SetupResult. Enforces cooldown + news lock."""
     if result.status not in ("VALID", "VALID_TRADE"):
         return
     if not _cooldown_ok(result.symbol, result.bias):
         logger.debug("Cooldown active for %s %s — skipping Telegram", result.symbol, result.bias)
         return
+
+    locked, reason = _news_lock_check(result.symbol)
+    if locked:
+        logger.info("NEWS LOCK – %s %s suppressed: %s", result.symbol, result.bias, reason)
+        return
+
     _mark_fired(result.symbol, result.bias)
 
     emoji = "🟢" if result.bias == "BUY" else "🔴"
