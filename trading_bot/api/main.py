@@ -19,6 +19,7 @@ from trading_bot.core.data_fetcher import fetch_all_timeframes, fetch_ohlcv
 from trading_bot.core.strategy_strict_liquidity import analyze, APPROVED_SYMBOLS
 from trading_bot.core.alert_system import send_setup_alert
 from trading_bot.core.performance_tracker import compute_performance
+from trading_bot.core.journal import load_journal
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -237,7 +238,7 @@ def get_alerts(limit: int = Query(default=30)):
 
 @app.get("/performance")
 def get_performance():
-    entries     = _load_json(JOURNAL_FILE, [])
+    entries     = load_journal()          # normalised — handles old + new entry formats
     perf        = compute_performance(entries)
     scanner     = _scan_cache
     valid_count = len([s for s in scanner.get("symbols", []) if s.get("status") == "VALID_TRADE"])

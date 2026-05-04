@@ -30,6 +30,7 @@ def resolve_open_outcomes(source: str = "auto") -> int:
     """
     Scan all OPEN journal entries and resolve any whose price has already
     hit SL or TP.  Returns the number of entries resolved.
+    load_journal() normalises old-format entries before we see them.
     """
     entries = load_journal()
     now = datetime.now(timezone.utc)
@@ -70,9 +71,10 @@ def _check_entry(entry: dict, df, now: datetime) -> Optional[dict]:
         symbol  = entry.get("symbol", "")
         bias    = str(entry.get("bias", "")).upper()
         entry_p = float(entry.get("entry", 0))
-        sl      = float(entry.get("sl", 0))
-        tp      = float(entry.get("tp", 0))
-        rr      = float(entry.get("rr", 0))
+        # support both new (sl/tp) and old (stop_loss/take_profit) field names
+        sl      = float(entry.get("sl") or entry.get("stop_loss") or 0)
+        tp      = float(entry.get("tp") or entry.get("take_profit") or 0)
+        rr      = float(entry.get("rr") or entry.get("target_rr") or 0)
 
         if not all([symbol, bias, entry_p, sl, tp]):
             return None

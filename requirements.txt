@@ -6,4 +6,4 @@ requests>=2.31.0
 yfinance>=0.2.36
 scikit-learn
 joblib
-python-multipart
+python-multiparthttpx
