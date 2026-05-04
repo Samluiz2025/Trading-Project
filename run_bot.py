@@ -49,12 +49,12 @@ def main():
 
     monitor.on_valid_setup(on_setup)
 
-    token   = os.getenv("TELEGRAM_BOT_TOKEN", "")
-    chat_id = os.getenv("TELEGRAM_CHAT_ID", "")
+    token   = os.getenv("TELEGRAM_VALID_BOT_TOKEN") or os.getenv("TELEGRAM_BOT_TOKEN", "")
+    chat_id = os.getenv("TELEGRAM_VALID_CHAT_ID")   or os.getenv("TELEGRAM_CHAT_ID", "")
     if token and chat_id:
         logger.info("Telegram alerts: ENABLED")
     else:
-        logger.info("Telegram alerts: DISABLED (set env vars to enable)")
+        logger.info("Telegram alerts: DISABLED (set TELEGRAM_VALID_BOT_TOKEN + TELEGRAM_VALID_CHAT_ID)")
 
     logger.info("Scanner started | Source: %s | Poll: %ds", args.source, args.poll_seconds)
 

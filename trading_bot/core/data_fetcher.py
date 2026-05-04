@@ -13,6 +13,22 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+# Cache live data for 60 s — prevents yfinance rate-limits on fast poll cycles
+_DATA_CACHE: dict = {}
+_CACHE_TTL = 60  # seconds
+
+
+def _cache_get(sym: str, interval: str):
+    entry = _DATA_CACHE.get((sym, interval))
+    if entry and (time.time() - entry[0]) < _CACHE_TTL:
+        return entry[1]
+    return None
+
+
+def _cache_set(sym: str, interval: str, df):
+    _DATA_CACHE[(sym, interval)] = (time.time(), df)
+
+
 CRYPTO_SYMBOLS = {"BTCUSDT", "ETHUSDT"}
 FOREX_SYMBOLS  = {"GBPUSD", "EURUSD", "USDCHF", "USDJPY"}
 METAL_SYMBOLS  = {"XAUUSD"}
@@ -120,6 +136,11 @@ def fetch_ohlcv(symbol: str, interval: str, source: str = "auto",
     if source == "mock":
         return _mock(sym, interval, limit)
 
+    # Return cached live data if still fresh (avoids rate-limits on fast polls)
+    cached = _cache_get(sym, interval)
+    if cached is not None:
+        return cached
+
     # Binance for crypto
     if source in ("auto","binance") and sym in CRYPTO_SYMBOLS:
         bi_map = {"1d":"1d","4h":"4h","1h":"1h","15m":"15m"}
@@ -127,6 +148,7 @@ def fetch_ohlcv(symbol: str, interval: str, source: str = "auto",
         if bi:
             df = _fetch_binance(sym, bi, limit)
             if _validate(df):
+                _cache_set(sym, interval, df)
                 return df
 
     # yfinance
@@ -137,14 +159,22 @@ def fetch_ohlcv(symbol: str, interval: str, source: str = "auto",
             if _validate(df1h, 10):
                 df = _resample_4h(df1h)
                 if _validate(df, 10):
+                    _cache_set(sym, interval, df)
                     return df
         else:
             yf_i, yf_p = _YF_INTERVALS.get(interval, ("1h","60d"))
             df = _fetch_yfinance(sym, yf_i, yf_p)
             if _validate(df):
+                _cache_set(sym, interval, df)
                 return df
 
-    # Weekend / all-sources-failed — return mock so dashboard stays alive
+    # Fall back to last cached value even if stale — better than mock
+    stale = _DATA_CACHE.get((sym, interval))
+    if stale:
+        logger.warning("Using stale cache for %s %s", sym, interval)
+        return stale[1]
+
+    # Last resort: mock so dashboard stays alive
     logger.warning("All live sources failed for %s %s — using mock data", sym, interval)
     return _mock(sym, interval, limit)
 
