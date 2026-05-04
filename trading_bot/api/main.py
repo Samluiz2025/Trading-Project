@@ -1,19 +1,7 @@
 """
-main.py  –  FastAPI backend
-─────────────────────────────────────────────────────────────────────────────
-Improved endpoints:
-  GET /           → dashboard HTML
-  GET /data       → full analysis for one symbol
-  GET /confluence → confluence map (score breakdown) for one symbol
-  GET /watchlist  → quick summary across all approved pairs
-  GET /status     → health check
-  GET /journal    → recent journal entries
-  GET /performance→ win/loss stats
-  GET /backtest   → lightweight historical backtest
-  GET /news       → pair news context
-─────────────────────────────────────────────────────────────────────────────
+main.py — Trading Intelligence Platform API
+Run:  python -m uvicorn trading_bot.api.main:app --reload --port 8000
 """
-
 from __future__ import annotations
 import json
 import logging
@@ -25,254 +13,371 @@ from typing import Optional
 from fastapi import FastAPI, Query
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
 
-from ..core.strategy_strict_liquidity import (
-    analyze, APPROVED_SYMBOLS, MAX_DAILY_SETUPS,
-)
-from ..core.confluence_engine import build_confluence_report
-from ..core.data_fetcher import fetch_all_timeframes
-from ..core.journal import load_journal, append_journal
-from ..core.performance_tracker import compute_performance
+from trading_bot.core.data_fetcher import fetch_all_timeframes, fetch_ohlcv
+from trading_bot.core.strategy_strict_liquidity import analyze, APPROVED_SYMBOLS
 
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
-app = FastAPI(title="Trading Intelligence Platform v2", version="2.0.0")
 
-BASE = Path(__file__).resolve().parent.parent.parent
-FRONTEND_DIR = BASE / "frontend"
-DATA_DIR     = BASE / "trading_bot" / "data"
+app = FastAPI(title="Trading Intelligence Platform", version="2.0.0")
 
-# Mount static frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ── Paths ─────────────────────────────────────────────────────────────────────
+BASE_DIR     = Path(__file__).resolve().parent.parent.parent
+FRONTEND_DIR = BASE_DIR / "frontend"
+DATA_DIR     = BASE_DIR / "trading_bot" / "data"
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+
+JOURNAL_FILE  = DATA_DIR / "trade_journal.json"
+ALERTS_FILE   = DATA_DIR / "alerts.json"
+
+# ── In-memory scan cache ──────────────────────────────────────────────────────
+_scan_cache: dict = {"symbols": [], "updated_at": None}
+_daily_count: int = 0
+
+
+def _load_json(path: Path, default):
+    try:
+        if path.exists():
+            return json.loads(path.read_text())
+    except Exception:
+        pass
+    return default
+
+
+def _save_json(path: Path, data):
+    try:
+        path.write_text(json.dumps(data, indent=2, default=str))
+    except Exception as e:
+        logger.error("Failed to save %s: %s", path, e)
+
+
+def _run_analysis(symbol: str, source: str = "auto") -> dict:
+    """Run full MTF analysis for one symbol. Returns serialisable dict."""
+    try:
+        tfs = fetch_all_timeframes(symbol, source)
+        result = analyze(
+            symbol   = symbol,
+            df_daily = tfs.get("daily"),
+            df_h4    = tfs.get("h4"),
+            df_h1    = tfs.get("h1"),
+            df_m15   = tfs.get("m15"),
+            daily_count = _daily_count,
+        )
+        d = result.to_dict()
+        d["source"] = source
+        # Build checklist from confluences + missing
+        checklist = [{"name": c, "ok": True,  "detail": ""} for c in (result.confluences or [])]
+        checklist += [{"name": m, "ok": False, "detail": ""} for m in (result.missing   or [])]
+        d["analysis_context"] = {
+            "checklist": checklist,
+            "session":   {"session": result.session},
+            "regime":    {"regime": "trending" if (result.adx or 0) >= 18 else "ranging"},
+            "order_block": {"confirmed": False},
+            "fvg": {"confirmed": False},
+            "inducement": {"confirmed": False},
+        }
+        d["timeframes"] = {
+            "daily": {"bias": result.daily_bias, "latest_price": result.latest_price},
+            "h1":    {"bias": result.h1_bias,    "latest_price": result.latest_price},
+        }
+        d["chart_overlays"] = {}
+        d["risk_reward_ratio"] = result.rr
+        d["final_bias"] = result.bias or result.daily_bias or "NEUTRAL"
+        # Map status for frontend
+        if d.get("status") == "VALID_TRADE":
+            d["final_bias"] = result.bias or "NEUTRAL"
+        d["stalker"] = {
+            "state": _stalk_state(result),
+            "score": result.quality_score,
+        }
+        d["tier"]          = _tier(result)
+        d["ranking_score"] = result.quality_score
+        d["rank"]          = "-"
+        return d
+    except Exception as e:
+        logger.error("Analysis failed for %s: %s", symbol, e)
+        return {
+            "status": "ERROR", "symbol": symbol, "message": str(e),
+            "final_bias": "NEUTRAL", "daily_bias": "-", "h1_bias": "-",
+            "latest_price": None, "confidence": "LOW", "source": source,
+            "stalker": {"state": "error", "score": 0},
+            "tier": "C", "ranking_score": 0, "rank": "-",
+            "analysis_context": {"checklist": [], "session": {}, "regime": {}},
+        }
+
+
+def _stalk_state(r) -> str:
+    if r.status == "VALID_TRADE":  return "valid"
+    if (r.quality_score or 0) >= 45: return "near_valid"
+    if (r.quality_score or 0) >= 25: return "developing"
+    return "watching"
+
+
+def _tier(r) -> str:
+    s = r.quality_score or 0
+    if s >= 80: return "A"
+    if s >= 65: return "B"
+    if s >= 45: return "C"
+    return "D"
+
+
+# ── Static files ──────────────────────────────────────────────────────────────
 if FRONTEND_DIR.exists():
     app.mount("/static", StaticFiles(directory=str(FRONTEND_DIR)), name="static")
 
-# ── Daily setup counter (shared with scanner via env or simple file) ──────────
-def _get_daily_count() -> int:
-    try:
-        f = DATA_DIR / "daily_count.json"
-        if f.exists():
-            data = json.loads(f.read_text())
-            today = datetime.now(timezone.utc).date().isoformat()
-            if data.get("date") == today:
-                return int(data.get("count", 0))
-    except Exception:
-        pass
-    return 0
 
-
-# ── Root ──────────────────────────────────────────────────────────────────────
+# ── Routes ────────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
-async def root():
-    index = FRONTEND_DIR / "index.html"
-    if index.exists():
-        return HTMLResponse(content=index.read_text(), status_code=200)
-    return HTMLResponse(content="<h1>Trading Intelligence Platform v2</h1>", status_code=200)
+def root():
+    idx = FRONTEND_DIR / "index.html"
+    if idx.exists():
+        return HTMLResponse(idx.read_text())
+    return HTMLResponse("<h2>Frontend not found. Place index.html in /frontend/</h2>")
 
-
-# ── Main analysis endpoint ────────────────────────────────────────────────────
 
 @app.get("/data")
-async def get_data(
-    symbol:   str = Query("GBPUSD"),
-    interval: str = Query("1h"),
-    source:   str = Query("auto"),
+def get_data(
+    symbol:   str = Query(default="EURUSD"),
+    interval: str = Query(default="1h"),
+    source:   str = Query(default="auto"),
+    lite:     str = Query(default="false"),
 ):
-    symbol = symbol.upper()
-    tfs = fetch_all_timeframes(symbol, source)
-    result = analyze(
-        symbol      = symbol,
-        df_daily    = tfs["daily"],
-        df_h4       = tfs["h4"],
-        df_h1       = tfs["h1"],
-        df_m15      = tfs["m15"],
-        daily_count = _get_daily_count(),
-    )
-    return JSONResponse(result.to_dict())
+    sym = symbol.upper()
+    data = _run_analysis(sym, source)
+    return JSONResponse(content=data)
 
-
-# ── Confluence map endpoint (NEW) ─────────────────────────────────────────────
-
-@app.get("/confluence")
-async def get_confluence(
-    symbol: str = Query("GBPUSD"),
-    source: str = Query("auto"),
-):
-    symbol = symbol.upper()
-    tfs = fetch_all_timeframes(symbol, source)
-    report = build_confluence_report(
-        symbol   = symbol,
-        df_daily = tfs["daily"],
-        df_h4    = tfs["h4"],
-        df_h1    = tfs["h1"],
-        df_m15   = tfs["m15"],
-    )
-    return JSONResponse(report.to_dict())
-
-
-# ── Watchlist summary ─────────────────────────────────────────────────────────
 
 @app.get("/watchlist")
-async def get_watchlist(source: str = Query("auto")):
-    results = []
-    daily_count = _get_daily_count()
+def get_watchlist(
+    source: str = Query(default="auto"),
+    fast:   str = Query(default="false"),
+):
+    global _scan_cache
+    symbols = []
     for sym in APPROVED_SYMBOLS:
-        try:
-            tfs = fetch_all_timeframes(sym, source)
-            report = build_confluence_report(
-                symbol=sym, df_daily=tfs["daily"], df_h4=tfs["h4"],
-                df_h1=tfs["h1"], df_m15=tfs["m15"],
-            )
-            result = analyze(
-                symbol=sym, df_daily=tfs["daily"], df_h4=tfs["h4"],
-                df_h1=tfs["h1"], df_m15=tfs["m15"],
-                daily_count=daily_count,
-            )
-            entry = result.to_dict()
-            entry["confluence_score"]  = report.quality_score
-            entry["confluence_detail"] = report.to_dict()
-            results.append(entry)
-        except Exception as e:
-            results.append({"symbol": sym, "status": "ERROR", "message": str(e)})
-    return JSONResponse({"watchlist": results, "daily_setups_fired": daily_count,
-                         "daily_cap": MAX_DAILY_SETUPS})
+        d = _run_analysis(sym, source)
+        d["symbol"] = sym
+        symbols.append(d)
+
+    # Rank by quality_score
+    symbols.sort(key=lambda x: x.get("ranking_score", 0), reverse=True)
+    for i, s in enumerate(symbols, 1):
+        s["rank"] = f"#{i}"
+
+    _scan_cache = {"symbols": symbols, "updated_at": datetime.now(timezone.utc).isoformat()}
+    return JSONResponse(content=_scan_cache)
 
 
-# ── Status ────────────────────────────────────────────────────────────────────
+@app.get("/scan-report")
+def get_scan_report(
+    source:  str = Query(default="auto"),
+    broader: str = Query(default="false"),
+    fast:    str = Query(default="false"),
+):
+    syms = _scan_cache.get("symbols", [])
+    if not syms:
+        # quick scan
+        syms = []
+        for sym in APPROVED_SYMBOLS:
+            d = _run_analysis(sym, source)
+            d["symbol"] = sym
+            syms.append(d)
 
-@app.get("/status")
-async def status():
-    return JSONResponse({
-        "status": "online",
-        "version": "2.0.0",
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        "daily_setups_fired": _get_daily_count(),
-        "daily_cap": MAX_DAILY_SETUPS,
-        "approved_symbols": APPROVED_SYMBOLS,
-    })
+    valid      = [s for s in syms if s.get("status") == "VALID_TRADE"]
+    near_valid = [s for s in syms if s.get("stalker",{}).get("state") == "near_valid"]
+    developing = [s for s in syms if s.get("stalker",{}).get("state") == "developing"]
+    return JSONResponse({"valid": valid, "near_valid": near_valid, "developing": developing})
 
-
-# ── Journal ───────────────────────────────────────────────────────────────────
 
 @app.get("/journal")
-async def get_journal(limit: int = Query(50)):
-    entries = load_journal()
-    return JSONResponse({"entries": entries[-limit:], "total": len(entries)})
-
-
-# ── Performance ───────────────────────────────────────────────────────────────
-
-@app.get("/performance")
-async def get_performance():
-    entries = load_journal()
-    perf = compute_performance(entries)
-    return JSONResponse(perf)
-
-
-# ── Backtest ──────────────────────────────────────────────────────────────────
-
-@app.get("/backtest")
-async def backtest(
-    symbol: str = Query("GBPUSD"),
-    source: str = Query("auto"),
-    lookback_days: int = Query(30),
+def get_journal(
+    limit:    int = Query(default=50),
+    pair:     str = Query(default=""),
+    strategy: str = Query(default=""),
+    result:   str = Query(default=""),
+    quality:  str = Query(default=""),
+    month:    str = Query(default=""),
 ):
-    """
-    Walk-forward backtest: replays the strategy over historical H1 candles.
-    Slices the data so each 'step' uses only past data.
-    """
-    from ..core.data_fetcher import fetch_ohlcv
-    import pandas as pd
-
-    symbol = symbol.upper()
-    df_d  = fetch_ohlcv(symbol, "1d",  source, 250)
-    df_h4 = fetch_ohlcv(symbol, "4h",  source, 200)
-    df_h1 = fetch_ohlcv(symbol, "1h",  source, 24 * lookback_days + 50)
-    df_m  = fetch_ohlcv(symbol, "15m", source, 96 * lookback_days + 50)
-
-    if df_h1 is None or len(df_h1) < 50:
-        return JSONResponse({"error": "Insufficient data for backtest"}, status_code=422)
-
-    wins, losses, skipped = 0, 0, 0
-    trades = []
-
-    step_size = 4  # analyze every 4 H1 candles (≈ 4h step)
-    for i in range(50, len(df_h1) - step_size, step_size):
-        slice_h1 = df_h1.iloc[:i]
-        slice_d  = df_d[df_d.index <= slice_h1.index[-1]] if df_d is not None else df_d
-        slice_h4 = df_h4[df_h4.index <= slice_h1.index[-1]] if df_h4 is not None else df_h4
-        if df_m is not None:
-            slice_m = df_m[df_m.index <= slice_h1.index[-1]]
-        else:
-            slice_m = None
-
-        try:
-            r = analyze(symbol, slice_d, slice_h4, slice_h1, slice_m,
-                        daily_count=0)
-        except Exception:
-            continue
-
-        if r.status != "VALID":
-            skipped += 1
-            continue
-
-        # Simulate outcome: look ahead in next candles
-        future = df_h1.iloc[i: i + step_size * 6]
-        if r.bias == "BUY":
-            hit_tp = (future["high"] >= r.tp).any()
-            hit_sl = (future["low"]  <= r.sl).any()
-        else:
-            hit_tp = (future["low"]  <= r.tp).any()
-            hit_sl = (future["high"] >= r.sl).any()
-
-        if hit_tp and not hit_sl:
-            outcome = "WIN"
-            wins += 1
-        elif hit_sl:
-            outcome = "LOSS"
-            losses += 1
-        else:
-            outcome = "OPEN"
-
-        trades.append({
-            "time":   str(slice_h1.index[-1]),
-            "bias":   r.bias,
-            "entry":  r.entry,
-            "sl":     r.sl,
-            "tp":     r.tp,
-            "rr":     r.rr,
-            "score":  r.quality_score,
-            "outcome": outcome,
-        })
-
-    total = wins + losses
-    win_rate = round(wins / total * 100, 1) if total > 0 else 0
-
+    entries = _load_json(JOURNAL_FILE, [])
+    if pair:     entries = [e for e in entries if e.get("symbol","").upper() == pair.upper()]
+    if strategy: entries = [e for e in entries if strategy.lower() in str(e.get("strategy","")).lower()]
+    if result:   entries = [e for e in entries if str(e.get("result","")).upper() == result.upper()]
+    wins   = sum(1 for e in entries if str(e.get("result","")).upper() == "WIN")
+    losses = sum(1 for e in entries if str(e.get("result","")).upper() == "LOSS")
+    closed = sum(1 for e in entries if e.get("status") in ("WIN","LOSS","closed"))
+    wr     = round(wins/(wins+losses)*100, 1) if (wins+losses) > 0 else 0
     return JSONResponse({
-        "symbol":      symbol,
-        "lookback_days": lookback_days,
-        "total_trades": total,
-        "wins":        wins,
-        "losses":      losses,
-        "skipped_no_setup": skipped,
-        "win_rate_pct": win_rate,
-        "trades":      trades[-20:],  # last 20 for display
+        "entries": entries[-limit:],
+        "summary": {
+            "count": len(entries), "closed": closed,
+            "wins": wins, "losses": losses, "win_rate": wr,
+        },
+        "filters": {"pair": pair, "strategy": strategy, "result": result},
     })
 
 
-# ── News ──────────────────────────────────────────────────────────────────────
+@app.get("/alerts")
+def get_alerts(limit: int = Query(default=30)):
+    alerts = _load_json(ALERTS_FILE, [])
+    return JSONResponse({"entries": alerts[-limit:]})
+
+
+@app.get("/performance")
+def get_performance():
+    entries = _load_json(JOURNAL_FILE, [])
+    closed  = [e for e in entries if e.get("status") in ("WIN","LOSS")]
+    wins    = [e for e in closed if e.get("result","").upper() == "WIN"]
+    losses  = [e for e in closed if e.get("result","").upper() == "LOSS"]
+    wr      = round(len(wins)/len(closed)*100, 1) if closed else 0
+    total_r = sum(float(e.get("rr_achieved", 0) or 0) for e in wins) - len(losses)
+    pf      = round(abs(sum(float(e.get("rr_achieved",1) or 1) for e in wins) /
+              max(len(losses), 1)), 2)
+    scanner = _scan_cache
+    valid_count = len([s for s in scanner.get("symbols",[]) if s.get("status")=="VALID_TRADE"])
+    return JSONResponse({
+        "total_trades": len(entries),
+        "closed_trades": len(closed),
+        "open_trades": len(entries) - len(closed),
+        "pending_open_trades": 0,
+        "win_rate": wr,
+        "profit_factor": pf,
+        "expectancy_r": round(total_r / max(len(closed), 1), 2),
+        "scan_diagnostics": {
+            "evaluated_symbols": len(APPROVED_SYMBOLS),
+            "valid_candidates": valid_count,
+            "selected_count": valid_count,
+            "blocked_count": 0,
+            "rejected_count": len(APPROVED_SYMBOLS) - valid_count,
+            "selected_candidates": [s for s in scanner.get("symbols",[]) if s.get("status")=="VALID_TRADE"],
+        },
+        "scanner_health": {
+            "status": "healthy" if scanner.get("updated_at") else "idle",
+            "last_successful_scan": scanner.get("updated_at", "-"),
+            "total_symbols": len(APPROVED_SYMBOLS),
+            "completed_symbols": len(scanner.get("symbols", [])),
+        },
+        "edge_control": {"locked": False, "open_positions": {"total": 0, "stale": 0}},
+        "validation": {"validated_closed_trades": len(closed)},
+        "calibration": {},
+        "shadow_tracking": {},
+        "execution_agent": {"broker_draft_count": 0,
+                             "promotion_gate": {"status": "MONITORING"}},
+    })
+
+
+@app.get("/status")
+def get_status():
+    scanner = _scan_cache
+    syms = scanner.get("symbols", [])
+    valid = [s for s in syms if s.get("status") == "VALID_TRADE"]
+    return JSONResponse({
+        "status": "ok",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "forward_test": {"enabled": False, "name": "Live Monitoring", "mode_label": "OFF"},
+        "scanner_health": {
+            "status": "healthy" if syms else "idle",
+            "total_symbols": len(APPROVED_SYMBOLS),
+            "completed_symbols": len(syms),
+            "last_progress_at": scanner.get("updated_at", "-"),
+        },
+    })
+
 
 @app.get("/news")
-async def get_news(symbol: str = Query("GBPUSD")):
-    cal = DATA_DIR / "economic_calendar.json"
-    if not cal.exists():
-        return JSONResponse({
-            "symbol":  symbol.upper(),
-            "status":  "not_configured",
-            "message": "economic_calendar.json not found in trading_bot/data/",
+def get_news(symbol: str = Query(default="EURUSD")):
+    return JSONResponse({
+        "symbol": symbol,
+        "configured": False,
+        "message": "News feed not configured. Add economic_calendar.json to enable.",
+        "pair_news_bias": "NEUTRAL",
+        "news_lock": {"locked": False},
+        "events": [],
+        "headlines": [],
+    })
+
+
+@app.get("/forward-test")
+def get_forward_test(limit: int = Query(default=25), week_only: str = Query(default="false")):
+    return JSONResponse({"entries": [], "summary": {"count": 0, "closed": 0, "open": 0,
+                                                      "wins": 0, "losses": 0, "win_rate": 0,
+                                                      "total_r": 0, "average_r": 0}})
+
+
+@app.get("/strategy-lab")
+def get_strategy_lab():
+    return JSONResponse({"strategies": [], "summary": {}, "promotion_table": []})
+
+
+@app.get("/broker-drafts")
+def get_broker_drafts(limit: int = Query(default=25)):
+    return JSONResponse({"entries": [], "summary": {"count": 0, "active": 0, "closed": 0}})
+
+
+@app.get("/execution-control")
+def get_execution_control():
+    return JSONResponse({"enabled": False, "draft_only": True, "kill_switch": False,
+                          "strategy_freeze": False, "max_open_positions": 3,
+                          "current_open_positions": 0, "daily_closed_r": 0,
+                          "max_daily_loss_r": 3, "hard_block_reasons": []})
+
+
+@app.get("/execution-scorecards")
+def get_execution_scorecards(days: int = Query(default=7)):
+    return JSONResponse({"daily": [], "promotion_history": [], "summary": {}})
+
+
+@app.get("/digital-twin")
+def get_digital_twin():
+    return JSONResponse({"digital_twin": {}})
+
+
+@app.get("/health")
+def health():
+    return {"status": "ok", "timestamp": datetime.now(timezone.utc).isoformat()}
+
+
+# ── Legacy endpoints (from original main.py) ─────────────────────────────────
+@app.get("/bias")
+def get_bias(symbol: str = "BTCUSDT", interval: str = "1h", source: str = "auto"):
+    tfs = fetch_all_timeframes(symbol, source)
+    result = analyze(symbol, tfs["daily"], tfs["h4"], tfs["h1"], tfs["m15"])
+    return result.to_dict()
+
+
+@app.get("/setup")
+def get_setup(symbol: str = "BTCUSDT", interval: str = "1h", source: str = "auto"):
+    tfs = fetch_all_timeframes(symbol, source)
+    result = analyze(symbol, tfs["daily"], tfs["h4"], tfs["h1"], tfs["m15"])
+    return result.to_dict()
+
+
+@app.get("/chart_data")
+def get_chart_data(
+    symbol: str = Query(default="BTCUSDT"),
+    interval: str = Query(default="1h"),
+    source: str = Query(default="auto"),
+    limit: int = Query(default=100),
+):
+    df = fetch_ohlcv(symbol, interval, source, limit)
+    if df is None:
+        return JSONResponse({"error": "No data", "candles": []})
+    candles = []
+    for ts, row in df.iterrows():
+        candles.append({
+            "time":  ts.isoformat(),
+            "open":  round(float(row["open"]), 6),
+            "high":  round(float(row["high"]), 6),
+            "low":   round(float(row["low"]),  6),
+            "close": round(float(row["close"]),6),
         })
-    try:
-        data   = json.loads(cal.read_text())
-        events = [e for e in data if symbol.upper()[:3] in e.get("currencies", [])]
-        return JSONResponse({"symbol": symbol.upper(), "events": events})
-    except Exception as e:
-        return JSONResponse({"error": str(e)}, status_code=500)
+    return JSONResponse({"symbol": symbol, "interval": interval, "candles": candles})
