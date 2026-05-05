@@ -34,7 +34,7 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-LTF_MIN_SCORE  = 55
+LTF_MIN_SCORE  = 70
 LTF_MIN_RR     = 5.0
 ATR_SL_BUFFER  = 0.3   # multiplier on M15 ATR for SL buffer beyond OB
 

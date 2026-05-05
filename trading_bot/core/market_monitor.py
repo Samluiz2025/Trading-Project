@@ -34,8 +34,11 @@ class MarketMonitor:
         self._running      = False
         self._cycle_count  = 0
         # Track previous status per symbol to detect invalidations
-        self._prev_status: dict[str, str]  = {}
-        self._prev_bias:   dict[str, str]  = {}
+        self._prev_status:     dict[str, str] = {}
+        self._prev_bias:       dict[str, str] = {}
+        # Confirmation counter — require 2 consecutive VALID before alerting
+        self._consec_valid:    dict[str, int] = {}
+        self._consec_no_trade: dict[str, int] = {}
 
     def _reset_if_new_day(self):
         today = date.today()
@@ -69,10 +72,17 @@ class MarketMonitor:
         prev_bias   = self._prev_bias.get(symbol, "")
 
         if result.status == "VALID_TRADE":
-            self._daily_count += 1
-            if is_mock:
+            self._consec_valid[symbol]    = self._consec_valid.get(symbol, 0) + 1
+            self._consec_no_trade[symbol] = 0
+
+            # Require 2 consecutive VALID readings before alerting — kills oscillation
+            if self._consec_valid[symbol] < 2:
+                logger.debug("%s confirmed valid %d/2 — waiting for confirmation",
+                             symbol, self._consec_valid[symbol])
+            elif is_mock:
                 logger.warning("MOCK DATA – %s alert suppressed (no live feed)", symbol)
             else:
+                self._daily_count += 1
                 for cb in self._callbacks:
                     try:
                         cb(result)
@@ -92,9 +102,15 @@ class MarketMonitor:
                         send_ltf_alert(ltf)
                 except Exception as e:
                     logger.debug("LTF scan error for %s: %s", symbol, e)
-        elif prev_status == "VALID_TRADE" and result.status != "VALID_TRADE":
-            # Setup just became invalid — notify so trader can close/manage
-            if not is_mock:
+
+        else:
+            self._consec_valid[symbol]    = 0
+            self._consec_no_trade[symbol] = self._consec_no_trade.get(symbol, 0) + 1
+
+            # Require 2 consecutive NO_TRADE before invalidating — stops false cancellations
+            if (self._consec_no_trade[symbol] >= 2
+                    and prev_status == "VALID_TRADE"
+                    and not is_mock):
                 send_invalidation_alert(symbol, prev_bias,
                                         reason=result.message or "conditions no longer met")
 

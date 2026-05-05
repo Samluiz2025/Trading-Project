@@ -44,9 +44,12 @@ def _state_changed(symbol: str, result) -> tuple[bool, str]:
         return True, "setup became valid"
 
     # Score moved ≥ 10 points (meaningful change in confluence)
-    score_diff = abs((prev.get("score") or 0) - (result.quality_score or 0))
-    if score_diff >= 10:
-        return True, f"score changed by {score_diff:+d} pts"
+    prev_score = prev.get("score") or 0
+    curr_score = result.quality_score or 0
+    score_diff = curr_score - prev_score
+    if abs(score_diff) >= 10:
+        direction = "▲" if score_diff > 0 else "▼"
+        return True, f"score {direction}{abs(score_diff):+d}pts ({prev_score}→{curr_score})"
 
     # Entry price moved ≥ 0.1% (new level)
     prev_entry = prev.get("entry") or 0

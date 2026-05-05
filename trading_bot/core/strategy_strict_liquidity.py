@@ -12,12 +12,12 @@ import pandas as pd
 
 logger = logging.getLogger(__name__)
 
-MIN_QUALITY_SCORE = 55   # lowered from 72 so real setups surface
+MIN_QUALITY_SCORE = 70   # raised — only alert high-confidence setups
 MAX_DAILY_SETUPS  = 10
-MIN_ADX           = 18   # lowered from 22 — markets are often sub-22
-MIN_RR            = 2.0  # lowered from 3 for more realistic setups
+MIN_ADX           = 18
+MIN_RR            = 2.0
 ATR_SL_MULT       = 1.5
-ATR_TP_MULT       = 3.5
+ATR_TP_MULT       = 3.5   # fallback only — real TP comes from swing structure
 REFIRE_COOLDOWN_H = 2
 
 LONDON_OPEN  = 7
@@ -231,6 +231,51 @@ def _session(now: Optional[datetime] = None) -> tuple[bool, str]:
     return False, "Off-session"
 
 
+# ── Swing-based TP ───────────────────────────────────────────────────────────
+
+def _swing_tp(df_daily: pd.DataFrame, df_h4: pd.DataFrame,
+              bias: str, entry: float, sl: float, atr_h1: float) -> float:
+    """
+    Find TP at the nearest significant daily or H4 swing level beyond entry
+    that satisfies MIN_RR. Falls back to ATR×3.5 if no structural level found.
+    """
+    risk = abs(entry - sl)
+    if risk == 0:
+        risk = atr_h1 * ATR_SL_MULT
+
+    def _nearest_swing(df) -> Optional[float]:
+        if df is None or len(df) < 10:
+            return None
+        h = df["high"].values
+        l  = df["low"].values
+        if bias == "BUY":
+            targets = sorted(
+                float(h[i]) for i in range(1, len(h) - 1)
+                if h[i] > h[i-1] and h[i] > h[i+1] and h[i] > entry
+            )
+            for t in targets:
+                if (t - entry) / risk >= MIN_RR:
+                    return t
+        else:
+            targets = sorted(
+                (float(l[i]) for i in range(1, len(l) - 1)
+                 if l[i] < l[i-1] and l[i] < l[i+1] and l[i] < entry),
+                reverse=True,
+            )
+            for t in targets:
+                if (entry - t) / risk >= MIN_RR:
+                    return t
+        return None
+
+    tp = _nearest_swing(df_daily) or _nearest_swing(df_h4)
+    if tp is not None:
+        return round(tp, 6)
+
+    # Fallback: ATR-based
+    mult = ATR_TP_MULT * atr_h1
+    return round(entry + mult if bias == "BUY" else entry - mult, 6)
+
+
 # ── Scoring ───────────────────────────────────────────────────────────────────
 
 def _score(daily_b, h4_b, h1_struct, adx, rsi, bias,
@@ -337,15 +382,30 @@ def analyze(
     ob_ok  = ob_l is not None
     fvg_ok = _fvg(df_m15, bias)
 
-    # Entry / SL / TP
+    # Entry / SL
     if bias == "BUY":
         entry = round(ob_h, 5) if ob_ok else round(price, 5)
         sl    = round((ob_l - 0.3*atr) if ob_ok else (price - ATR_SL_MULT*atr), 5)
-        tp    = round(entry + ATR_TP_MULT * atr, 5)
     else:
         entry = round(ob_l, 5) if ob_ok else round(price, 5)
         sl    = round((ob_h + 0.3*atr) if ob_ok else (price + ATR_SL_MULT*atr), 5)
-        tp    = round(entry - ATR_TP_MULT * atr, 5)
+
+    # Stale check — if price already blew through the OB in trade direction, skip
+    if bias == "BUY" and price > entry + 1.5 * atr:
+        return no_trade(
+            ["Entry already passed"],
+            f"Price {price:.5f} already {((price-entry)/atr):.1f}×ATR above OB — setup stale.",
+            db, h4b, h1s, price, session_name,
+        )
+    if bias == "SELL" and price < entry - 1.5 * atr:
+        return no_trade(
+            ["Entry already passed"],
+            f"Price {price:.5f} already {((entry-price)/atr):.1f}×ATR below OB — setup stale.",
+            db, h4b, h1s, price, session_name,
+        )
+
+    # TP from nearest daily/H4 swing structure (real target, not ATR formula)
+    tp = _swing_tp(df_daily, df_h4, bias, entry, sl, atr)
 
     risk   = abs(entry - sl)
     reward = abs(tp - entry)
