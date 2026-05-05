@@ -35,7 +35,7 @@ def _save_alert(payload: dict):
         except Exception:
             pass
     alerts.append(payload)
-    ALERTS_FILE.write_text(json.dumps(alerts[-200:], indent=2))  # keep last 200
+    ALERTS_FILE.write_text(json.dumps(alerts[-500:], indent=2))  # keep last 500
 
 
 def _send_telegram(message: str):
@@ -55,15 +55,31 @@ def _send_telegram(message: str):
 
 
 def _news_lock_check(symbol: str) -> tuple[bool, str]:
-    """Return (is_locked, reason). Never crashes — safe to call always."""
+    """Return (is_locked, reason). Fast path — no HTTP calls."""
     try:
-        from .news_engine import load_symbol_news_context
-        ctx  = load_symbol_news_context(symbol)
-        lock = ctx.get("news_lock", {})
+        from .news_engine import (
+            load_symbol_news_context, split_symbol_currencies,
+            fetch_market_moving_events, get_news_lock, BuiltInCalendarProvider,
+            JsonEconomicCalendarProvider, _CompositeProvider,
+        )
+        from datetime import UTC, datetime as _dt
+        from pathlib import Path as _P
+
+        # Resolve provider (same logic as load_symbol_news_context, no headline fetch)
+        cal_path = _P(__file__).resolve().parents[1] / "data" / "economic_calendar.json"
+        if cal_path.exists():
+            provider = _CompositeProvider([JsonEconomicCalendarProvider(cal_path), BuiltInCalendarProvider()])
+        else:
+            provider = BuiltInCalendarProvider()
+
+        now = _dt.now(UTC)
+        currencies = list(split_symbol_currencies(symbol))
+        events = fetch_market_moving_events(provider=provider, currencies=currencies, current_time=now)
+        lock = get_news_lock(symbol, events, current_time=now)
         if lock.get("locked"):
             ev   = lock["events"][0]
             mins = ev["minutes_from_now"]
-            direction = "in" if mins > 0 else "just released"
+            direction = "in" if mins > 0 else "released"
             return True, f"{ev['event_name']} ({ev['currency']}) {direction} {abs(mins):.0f}min"
     except Exception as e:
         logger.debug("News lock check failed for %s: %s", symbol, e)
