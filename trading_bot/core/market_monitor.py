@@ -16,7 +16,7 @@ from .strategy_strict_liquidity import (
     analyze, APPROVED_SYMBOLS, SetupResult, MAX_DAILY_SETUPS
 )
 from .data_fetcher import fetch_all_timeframes
-from .alert_system import send_invalidation_alert
+from .alert_system import send_invalidation_alert, send_ltf_alert
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +78,21 @@ class MarketMonitor:
                         cb(result)
                     except Exception as e:
                         logger.error("Callback error: %s", e)
+                # LTF precision entry scan — runs after HTF alert
+                try:
+                    from .ltf_engine import find_ltf_entry
+                    ltf = find_ltf_entry(
+                        symbol    = symbol,
+                        bias      = result.bias,
+                        htf_entry = result.entry,
+                        htf_tp    = result.tp,
+                        htf_rr    = result.rr,
+                        source    = self.source,
+                    )
+                    if ltf.found:
+                        send_ltf_alert(ltf)
+                except Exception as e:
+                    logger.debug("LTF scan error for %s: %s", symbol, e)
         elif prev_status == "VALID_TRADE" and result.status != "VALID_TRADE":
             # Setup just became invalid — notify so trader can close/manage
             if not is_mock:

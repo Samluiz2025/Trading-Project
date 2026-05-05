@@ -191,6 +191,60 @@ def send_setup_alert(result) -> None:
     })
 
 
+def send_ltf_alert(ltf_result) -> None:
+    """
+    Fire a separate Telegram alert for an LTF precision entry.
+    Only fires when RR >= 5 and trigger is genuinely new.
+    """
+    if not ltf_result.found:
+        return
+
+    key = f"LTF_{ltf_result.symbol}_{ltf_result.bias}_{ltf_result.trigger}"
+    prev = _last_state.get(key)
+    now  = datetime.now(timezone.utc)
+
+    if prev:
+        elapsed = (now - prev.get("sent_at", now)).total_seconds()
+        # Don't resend same LTF trigger within 10 minutes
+        if elapsed < 600:
+            return
+        # Don't resend if entry hasn't moved
+        if prev.get("entry") and ltf_result.ltf_entry:
+            pct = abs(ltf_result.ltf_entry - prev["entry"]) / prev["entry"]
+            if pct < 0.0005:   # less than 0.05% move
+                return
+
+    _last_state[key] = {"entry": ltf_result.ltf_entry, "sent_at": now}
+
+    emoji = "🟢" if ltf_result.bias == "BUY" else "🔴"
+    msg = (
+        f"⚡ *{ltf_result.symbol}* – {ltf_result.bias} \\[LTF PRECISION\\]\n"
+        f"Trigger: {ltf_result.trigger}\n"
+        f"Entry: `{ltf_result.ltf_entry}` | SL: `{ltf_result.ltf_sl}` | TP: `{ltf_result.ltf_tp}`\n"
+        f"RR: *1:{ltf_result.ltf_rr}* {emoji}  _(HTF was 1:{ltf_result.htf_rr})_\n"
+        f"✅ {chr(10).join(ltf_result.confluences)}"
+    )
+
+    logger.info(
+        "\n" + "="*50
+        + f"\n[LTF] {ltf_result.symbol} {ltf_result.bias} | {ltf_result.trigger}"
+        + f" | RR=1:{ltf_result.ltf_rr}\n" + "="*50
+    )
+    _send_telegram(msg)
+    _save_alert({
+        "type":       "LTF",
+        "pair":       ltf_result.symbol,
+        "bias":       ltf_result.bias,
+        "entry":      ltf_result.ltf_entry,
+        "sl":         ltf_result.ltf_sl,
+        "tp":         ltf_result.ltf_tp,
+        "rr":         ltf_result.ltf_rr,
+        "htf_rr":     ltf_result.htf_rr,
+        "trigger":    ltf_result.trigger,
+        "timestamp":  now.isoformat(),
+    })
+
+
 def send_invalidation_alert(symbol: str, prev_bias: str, reason: str = "") -> None:
     """
     Notify Telegram when a previously valid setup is no longer valid.
