@@ -231,6 +231,58 @@ def _session(now: Optional[datetime] = None) -> tuple[bool, str]:
     return False, "Off-session"
 
 
+# ── Multi-strategy bonus checks ───────────────────────────────────────────────
+
+def _at_sd_zone(df_daily: pd.DataFrame, bias: str, entry: float, atr: float) -> bool:
+    """
+    Pullback strategy cross-check: is the entry sitting inside/near a daily
+    supply or demand zone (significant swing cluster)?
+    Gives +10 bonus when confirmed — setup has two-strategy confluence.
+    """
+    try:
+        h = df_daily["high"].values[-80:]
+        l = df_daily["low"].values[-80:]
+        tolerance = atr * 3.0   # within 3×H1 ATR of a daily swing extreme
+        if bias == "BUY":
+            swings = [l[i] for i in range(1, len(l)-1)
+                      if l[i] < l[i-1] and l[i] < l[i+1]]
+            return any(abs(entry - s) < tolerance for s in swings[-6:])
+        else:
+            swings = [h[i] for i in range(1, len(h)-1)
+                      if h[i] > h[i-1] and h[i] > h[i+1]]
+            return any(abs(entry - s) < tolerance for s in swings[-6:])
+    except Exception:
+        return False
+
+
+def _htf_pullback(df_h4: pd.DataFrame, bias: str) -> bool:
+    """
+    HTF zone strategy cross-check: is H4 in a pullback (30–70% retrace)
+    after a clear displacement?  Confirms the setup is a reaction, not a chase.
+    Gives +10 bonus when confirmed.
+    """
+    try:
+        c = df_h4["close"].values[-30:]
+        h = df_h4["high"].values[-30:]
+        l = df_h4["low"].values[-30:]
+        if len(c) < 20:
+            return False
+        swing_h = max(h[-20:])
+        swing_l = min(l[-20:])
+        span = swing_h - swing_l
+        if span == 0:
+            return False
+        price = c[-1]
+        if bias == "BUY":
+            retrace = (swing_h - price) / span   # how far pulled back from high
+            return 0.30 <= retrace <= 0.72 and price > c[-20]
+        else:
+            retrace = (price - swing_l) / span   # how far bounced from low
+            return 0.30 <= retrace <= 0.72 and price < c[-20]
+    except Exception:
+        return False
+
+
 # ── Swing-based TP ───────────────────────────────────────────────────────────
 
 def _swing_tp(df_daily: pd.DataFrame, df_h4: pd.DataFrame,
@@ -422,6 +474,16 @@ def analyze(
         db, h4b, h1s, adx, rsi, bias,
         liq, bos, ob_ok, fvg_ok, sess_ok, rr
     )
+
+    # ── Multi-strategy bonuses ─────────────────────────────────────────────
+    # Each bonus adds +10 pts (capped at 100). A setup confirmed by multiple
+    # strategies is higher conviction than one confirmed by SMC alone.
+    if _at_sd_zone(df_daily, bias, entry, atr):
+        score = min(score + 10, 100)
+        confluences.append("Daily S/D Zone ✓")
+    if _htf_pullback(df_h4, bias):
+        score = min(score + 10, 100)
+        confluences.append("H4 Pullback ✓")
 
     if score < MIN_QUALITY_SCORE:
         return SetupResult(

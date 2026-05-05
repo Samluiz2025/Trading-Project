@@ -45,10 +45,10 @@ _INDICES_CRYPTO = {
 
 def _dedup_correlated(results: list[SetupResult]) -> list[SetupResult]:
     """
-    Reduce correlated setups: keep only the strongest per macro group.
-      - USD majors:       max 2 BUY + max 2 SELL (highest score wins)
-      - Indices/crypto:   max 1 BUY + max 1 SELL
-      - Cross pairs:      all kept (they express unique cross-currency dynamics)
+    Reduce correlated setups to target 10-15 quality alerts per day.
+      - USD majors:     max 3 BUY + max 3 SELL (highest score wins)
+      - Indices/crypto: max 2 BUY + max 2 SELL
+      - Cross pairs:    max 5 (all if fewer) — sorted by score
     Returns list sorted by score descending.
     """
     def top(lst, n):
@@ -61,7 +61,9 @@ def _dedup_correlated(results: list[SetupResult]) -> list[SetupResult]:
     crosses  = [r for r in results
                 if r.symbol not in _USD_MAJORS and r.symbol not in _INDICES_CRYPTO]
 
-    deduped = top(usd_buy, 2) + top(usd_sell, 2) + top(idx_buy, 1) + top(idx_sell, 1) + crosses
+    deduped = (top(usd_buy, 3) + top(usd_sell, 3) +
+               top(idx_buy, 2) + top(idx_sell, 2) +
+               top(crosses, 5))
     return sorted(deduped, key=lambda r: r.quality_score, reverse=True)
 
 
@@ -229,6 +231,15 @@ class MarketMonitor:
         except Exception as e:
             logger.warning("Outcome resolver error: %s", e)
 
+    def _run_trade_manager(self):
+        try:
+            from .trade_manager import check_open_trades
+            sent = check_open_trades(self.source)
+            if sent:
+                logger.info("Trade manager: %d management alert(s) sent", sent)
+        except Exception as e:
+            logger.warning("Trade manager error: %s", e)
+
     def run(self):
         self._running = True
         logger.info("MarketMonitor started. Poll: %ds | Source: %s",
@@ -240,6 +251,9 @@ class MarketMonitor:
                 self.scan_all()
             except Exception as e:
                 logger.error("Scan cycle error: %s", e)
+
+            # Trade management (breakeven / partial close alerts) every cycle
+            self._run_trade_manager()
 
             self._cycle_count += 1
             if self._cycle_count % RESOLVE_EVERY_N_CYCLES == 0:
