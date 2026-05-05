@@ -19,9 +19,6 @@ logger = logging.getLogger(__name__)
 DATA_DIR    = Path(__file__).resolve().parent.parent / "data"
 ALERTS_FILE = DATA_DIR / "alerts.json"
 
-# Minimum seconds between identical (unchanged) alerts for the same symbol
-MIN_REPEAT_SECONDS = 300   # 5 minutes — prevents hammering same setup every 5s
-
 # Last alerted state per symbol — used to detect meaningful changes
 _last_state: dict[str, dict] = {}
 
@@ -59,15 +56,8 @@ def _state_changed(symbol: str, result) -> tuple[bool, str]:
         if pct >= 0.001:
             return True, f"entry moved {pct*100:.2f}%"
 
-    # Minimum repeat guard — same setup, not enough time passed
-    last_sent = prev.get("sent_at")
-    if last_sent:
-        elapsed = (datetime.now(timezone.utc) - last_sent).total_seconds()
-        if elapsed < MIN_REPEAT_SECONDS:
-            return False, f"unchanged setup ({int(elapsed)}s ago)"
-
-    # Same setup but enough time passed — resend as confirmation
-    return True, "setup confirmed (periodic update)"
+    # Nothing meaningful changed — stay silent
+    return False, "unchanged setup"
 
 
 def _save_state(symbol: str, result):
@@ -204,14 +194,15 @@ def send_ltf_alert(ltf_result) -> None:
     now  = datetime.now(timezone.utc)
 
     if prev:
-        elapsed = (now - prev.get("sent_at", now)).total_seconds()
-        # Don't resend same LTF setup within 10 minutes
-        if elapsed < 600:
-            return
-        # Don't resend if entry hasn't moved ≥ 0.05%
+        # Only resend LTF alert if entry moved ≥ 0.1% — otherwise stay silent
         if prev.get("entry") and ltf_result.ltf_entry:
             pct = abs(ltf_result.ltf_entry - prev["entry"]) / prev["entry"]
-            if pct < 0.0005:
+            if pct < 0.001:
+                return
+        else:
+            # No entry to compare yet — guard against immediate re-fire (2 min)
+            elapsed = (now - prev.get("sent_at", now)).total_seconds()
+            if elapsed < 120:
                 return
 
     _last_state[key] = {"entry": ltf_result.ltf_entry, "sent_at": now}
