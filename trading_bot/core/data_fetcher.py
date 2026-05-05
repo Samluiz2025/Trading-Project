@@ -68,7 +68,7 @@ YFINANCE_MAP = {
     # Indices
     "NAS100":  "NQ=F",       "US100":   "NQ=F",
     "SP500":   "ES=F",       "US30":    "YM=F",
-    "GER40":   "GDAXI",      "UK100":   "^FTSE",
+    "GER40":   "^GDAXI",     "UK100":   "^FTSE",
     "JPN225":  "NKD=F",      "JP225":   "NKD=F",
     # Crypto (Binance handles these natively; fallback for yfinance)
     "BTCUSDT": "BTC-USD",    "ETHUSDT": "ETH-USD",
@@ -146,8 +146,9 @@ def _resample_4h(df_1h: pd.DataFrame) -> pd.DataFrame:
 def _mock(symbol: str, interval: str, n: int) -> pd.DataFrame:
     np.random.seed(hash(symbol + interval) % 2**31)
     base = {"BTCUSDT":65000,"ETHUSDT":3500,"XAUUSD":2350,
-            "GBPUSD":1.27,"EURUSD":1.08,"USDJPY":151,
-            "USDCHF":0.90,"NAS100":18000}.get(symbol.upper(), 1.0)
+            "GBPUSD":1.27,"EURUSD":1.08,"USDJPY":151,"USDCHF":0.90,
+            "NAS100":18000,"SP500":5800,"US30":43000,"GER40":23000,
+            "UK100":8500,"JPN225":38000,"USOIL":75}.get(symbol.upper(), 1.0)
     vol = base * 0.003
     closes = base + np.cumsum(np.random.randn(n) * vol)
     highs  = closes + np.abs(np.random.randn(n) * vol * 0.5)
@@ -206,7 +207,9 @@ def fetch_ohlcv(symbol: str, interval: str, source: str = "auto",
 
     # Last resort: mock so dashboard stays alive
     logger.warning("All live sources failed for %s %s — using mock data", sym, interval)
-    return _mock(sym, interval, limit)
+    df = _mock(sym, interval, limit)
+    df.attrs["is_mock"] = True   # flag so downstream can skip alerts
+    return df
 
 
 def fetch_all_timeframes(symbol: str, source: str = "auto") -> dict[str, Optional[pd.DataFrame]]:

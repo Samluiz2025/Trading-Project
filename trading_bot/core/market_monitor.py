@@ -46,6 +46,13 @@ class MarketMonitor:
     def scan_symbol(self, symbol: str) -> SetupResult:
         self._reset_if_new_day()
         tfs = fetch_all_timeframes(symbol, self.source)
+
+        # Skip callbacks if critical timeframes are mock data (no live feed)
+        is_mock = any(
+            getattr(tfs.get(tf), "attrs", {}).get("is_mock", False)
+            for tf in ("daily", "h1")
+        )
+
         result = analyze(
             symbol      = symbol,
             df_daily    = tfs["daily"],
@@ -56,11 +63,14 @@ class MarketMonitor:
         )
         if result.status == "VALID_TRADE":
             self._daily_count += 1
-            for cb in self._callbacks:
-                try:
-                    cb(result)
-                except Exception as e:
-                    logger.error("Callback error: %s", e)
+            if is_mock:
+                logger.warning("MOCK DATA – %s alert suppressed (no live feed)", symbol)
+            else:
+                for cb in self._callbacks:
+                    try:
+                        cb(result)
+                    except Exception as e:
+                        logger.error("Callback error: %s", e)
         return result
 
     def scan_all(self) -> list[SetupResult]:

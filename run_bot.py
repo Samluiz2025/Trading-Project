@@ -35,8 +35,27 @@ def main():
 
     monitor = MarketMonitor(source=args.source, poll_seconds=args.poll_seconds)
 
-    # Tracks last journal log time per (symbol, bias) to prevent duplicates
+    # Seed _journal_last from journal file so cooldown survives restarts
+    from trading_bot.core.journal import load_journal as _load_j
     _journal_last: dict[str, datetime] = {}
+    _now = datetime.now(timezone.utc)
+    _cutoff = _now - timedelta(hours=JOURNAL_COOLDOWN_H)
+    for _e in _load_j():
+        _sym  = _e.get("symbol", "")
+        _bias = str(_e.get("bias", "")).upper()
+        _ts_raw = _e.get("timestamp") or _e.get("logged_at", "")
+        try:
+            _ts = datetime.fromisoformat(str(_ts_raw).replace("Z", "+00:00"))
+            if _ts.tzinfo is None:
+                _ts = _ts.replace(tzinfo=timezone.utc)
+            if _ts > _cutoff:
+                key = f"{_sym}_{_bias}"
+                # Keep the most recent log time per key
+                if key not in _journal_last or _ts > _journal_last[key]:
+                    _journal_last[key] = _ts
+        except Exception:
+            pass
+    logger.info("Journal cooldown seeded: %d active keys from file", len(_journal_last))
 
     def _journal_ok(symbol: str, bias: str) -> bool:
         key  = f"{symbol}_{bias}"
