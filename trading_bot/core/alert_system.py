@@ -12,7 +12,8 @@ logger = logging.getLogger(__name__)
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 ALERTS_FILE = DATA_DIR / "alerts.json"
 
-REFIRE_COOLDOWN_H = 1
+REFIRE_COOLDOWN_H  = 1   # min gap between same-direction alerts
+JOURNAL_BLOCK_H    = 8   # suppress re-alert if OPEN or recent WIN exists within this window
 _last_fired: dict[str, datetime] = {}
 
 
@@ -54,6 +55,56 @@ def _send_telegram(message: str):
         logger.warning("Telegram send failed: %s", e)
 
 
+def _journal_block_check(symbol: str, bias: str) -> tuple[bool, str]:
+    """
+    Return (is_blocked, reason).
+    Blocked when the journal already has within the last JOURNAL_BLOCK_H hours:
+      - an OPEN entry for same symbol+bias (trade still live), OR
+      - a WIN entry (TP hit — don't re-enter the same move immediately)
+    Old OPEN entries beyond the window are ignored — they're unresolved stale logs.
+    """
+    try:
+        from .journal import load_journal
+        now     = datetime.now(timezone.utc)
+        cutoff  = now - timedelta(hours=JOURNAL_BLOCK_H)
+        entries = load_journal()
+        for e in entries:
+            if e.get("symbol", "").upper() != symbol.upper():
+                continue
+            if str(e.get("bias", "")).upper() != bias.upper():
+                continue
+            outcome = str(e.get("outcome", "")).upper()
+            # Parse entry timestamp (when the trade was logged)
+            ts_raw = e.get("timestamp") or e.get("logged_at") or ""
+            try:
+                ts = datetime.fromisoformat(str(ts_raw).replace("Z", "+00:00"))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+            except Exception:
+                continue  # can't parse timestamp — skip
+            if ts < cutoff:
+                continue  # entry is older than our window — ignore
+            # Block if trade is still OPEN and was logged recently
+            if outcome == "OPEN":
+                age_h = (now - ts).total_seconds() / 3600
+                return True, f"trade OPEN in journal ({age_h:.1f}h ago)"
+            # Block if WIN was logged recently (TP hit)
+            if outcome == "WIN":
+                closed_raw = e.get("closed_at") or ts_raw
+                try:
+                    closed_ts = datetime.fromisoformat(str(closed_raw).replace("Z", "+00:00"))
+                    if closed_ts.tzinfo is None:
+                        closed_ts = closed_ts.replace(tzinfo=timezone.utc)
+                    if closed_ts > cutoff:
+                        age_h = (now - closed_ts).total_seconds() / 3600
+                        return True, f"TP already hit {age_h:.1f}h ago"
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.debug("Journal block check failed for %s: %s", symbol, e)
+    return False, ""
+
+
 def _news_lock_check(symbol: str) -> tuple[bool, str]:
     """Return (is_locked, reason). Fast path — no HTTP calls."""
     try:
@@ -92,6 +143,11 @@ def send_setup_alert(result) -> None:
         return
     if not _cooldown_ok(result.symbol, result.bias):
         logger.debug("Cooldown active for %s %s — skipping Telegram", result.symbol, result.bias)
+        return
+
+    blocked, j_reason = _journal_block_check(result.symbol, result.bias)
+    if blocked:
+        logger.info("JOURNAL BLOCK – %s %s suppressed: %s", result.symbol, result.bias, j_reason)
         return
 
     locked, reason = _news_lock_check(result.symbol)
