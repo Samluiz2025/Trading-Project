@@ -16,6 +16,7 @@ from .strategy_strict_liquidity import (
     analyze, APPROVED_SYMBOLS, SetupResult, MAX_DAILY_SETUPS
 )
 from .data_fetcher import fetch_all_timeframes
+from .alert_system import send_invalidation_alert
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +33,9 @@ class MarketMonitor:
         self._callbacks: list[Callable[[SetupResult], None]] = []
         self._running      = False
         self._cycle_count  = 0
+        # Track previous status per symbol to detect invalidations
+        self._prev_status: dict[str, str]  = {}
+        self._prev_bias:   dict[str, str]  = {}
 
     def _reset_if_new_day(self):
         today = date.today()
@@ -61,6 +65,9 @@ class MarketMonitor:
             df_m15      = tfs["m15"],
             daily_count = self._daily_count,
         )
+        prev_status = self._prev_status.get(symbol, "")
+        prev_bias   = self._prev_bias.get(symbol, "")
+
         if result.status == "VALID_TRADE":
             self._daily_count += 1
             if is_mock:
@@ -71,6 +78,14 @@ class MarketMonitor:
                         cb(result)
                     except Exception as e:
                         logger.error("Callback error: %s", e)
+        elif prev_status == "VALID_TRADE" and result.status != "VALID_TRADE":
+            # Setup just became invalid — notify so trader can close/manage
+            if not is_mock:
+                send_invalidation_alert(symbol, prev_bias,
+                                        reason=result.message or "conditions no longer met")
+
+        self._prev_status[symbol] = result.status
+        self._prev_bias[symbol]   = result.bias or prev_bias
         return result
 
     def scan_all(self) -> list[SetupResult]:
