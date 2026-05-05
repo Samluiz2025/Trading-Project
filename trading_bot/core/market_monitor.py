@@ -82,12 +82,11 @@ class MarketMonitor:
                 try:
                     from .ltf_engine import find_ltf_entry
                     ltf = find_ltf_entry(
-                        symbol    = symbol,
-                        bias      = result.bias,
-                        htf_entry = result.entry,
-                        htf_tp    = result.tp,
-                        htf_rr    = result.rr,
-                        source    = self.source,
+                        symbol = symbol,
+                        bias   = result.bias,
+                        htf_tp = result.tp,
+                        htf_rr = result.rr,
+                        source = self.source,
                     )
                     if ltf.found:
                         send_ltf_alert(ltf)

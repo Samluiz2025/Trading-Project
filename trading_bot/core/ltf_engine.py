@@ -1,336 +1,336 @@
 """
-ltf_engine.py – Lower Time Frame (M5) precision entry engine
+ltf_engine.py – Lower Time Frame precision entry engine (M30 / M15)
 ─────────────────────────────────────────────────────────────────────────────
-Called AFTER an HTF setup is confirmed (VALID_TRADE on Daily/H4/H1/M15).
+Called AFTER the HTF analysis confirms a VALID_TRADE on Daily/H4/H1/M15.
 
-Concept:
-  - HTF gives bias + macro TP target
-  - M5 gives a precise entry with a tight SL (just beyond the M5 wick)
-  - Same TP, much smaller SL  →  1:10–20 RR instead of 1:2–3
+Concept
+-------
+HTF analysis establishes the macro bias and TP target.
+LTF analysis zooms into M30/M15 to find a valid SMC setup at that same level
+with a much tighter SL based on LTF structure instead of H1 ATR.
 
-LTF Trigger Patterns (in direction of HTF bias):
-  1. M5 Liquidity Sweep + Rejection  ← highest quality
-       BUY: latest M5 bar's low swept below recent swing low, closed back above
-       SELL: latest M5 bar's high swept above recent swing high, closed back below
+Same TP, smaller SL → much higher RR (typically 1:8 – 1:20).
 
-  2. M5 Break of Structure (BOS)
-       BUY: M5 bar closes above the high of the previous 5 bars (bullish BOS)
-       SELL: M5 bar closes below the low of the previous 5 bars (bearish BOS)
+LTF Entry Requirements (all scored, minimum 55/100 required)
+─────────────────────────────────────────────────────────────
+  1. M30 bias aligned with HTF direction          (+20)
+  2. M15 market structure aligned                 (+15)
+  3. M15 liquidity sweep confirmed                (+20)
+  4. M15 BOS (break of structure) confirmed       (+20)
+  5. M15 order block identified (entry level)     (+15)
+  6. M15 FVG present                              (+10)
 
-  3. M5 Fair Value Gap (FVG) + Rejection
-       BUY: 3-candle bullish FVG pattern — price returned to gap and rejected
-       SELL: 3-candle bearish FVG pattern — price returned to gap and rejected
-
-  4. M5 Order Block Touch
-       BUY: price returned to the last bearish OB before the bullish move
-       SELL: price returned to the last bullish OB before the bearish move
-
-Requirements for a valid LTF entry:
-  - HTF status must be VALID_TRADE
-  - LTF trigger must be within 0.3% of the HTF entry price
-  - Minimum RR of 5:1 (no point taking LTF entries for small RR)
-  - Latest M5 bar must be closed (not the live forming bar)
+Entry  : M15 order block level (ob_high for SELL, ob_low for BUY)
+         Falls back to current M15 close if no OB found but score ≥ 55
+SL     : Beyond M15 OB (+ 0.3 × M15 ATR buffer) — much tighter than H1
+TP     : HTF macro target (unchanged from main analysis)
+Min RR : 5.0 (below this, no point — just take the swing entry)
 """
 from __future__ import annotations
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Optional
 import pandas as pd
-import numpy as np
 
 logger = logging.getLogger(__name__)
 
-MIN_LTF_RR = 5.0          # minimum RR to bother with LTF entry
-ENTRY_ZONE_PCT = 0.003     # LTF trigger must be within 0.3% of HTF entry
-SL_BUFFER_MULT = 1.5       # SL placed this many pips beyond the wick
-LOOKBACK_BARS  = 20        # M5 bars to scan for triggers
-BOS_LOOKBACK   = 5         # bars to define the BOS swing
+LTF_MIN_SCORE  = 55
+LTF_MIN_RR     = 5.0
+ATR_SL_BUFFER  = 0.3   # multiplier on M15 ATR for SL buffer beyond OB
 
 
 @dataclass
 class LTFResult:
-    found:        bool
-    symbol:       str
-    bias:         str
-    trigger:      str         # e.g. "M5 Liquidity Sweep + Rejection"
-    ltf_entry:    Optional[float] = None
-    ltf_sl:       Optional[float] = None
-    ltf_tp:       Optional[float] = None
-    ltf_rr:       Optional[float] = None
-    htf_rr:       Optional[float] = None
-    confluences:  list = None
+    found:       bool
+    symbol:      str
+    bias:        str
+    score:       int               = 0
+    confidence:  str               = "LOW"
+    ltf_entry:   Optional[float]   = None
+    ltf_sl:      Optional[float]   = None
+    ltf_tp:      Optional[float]   = None
+    ltf_rr:      Optional[float]   = None
+    htf_rr:      Optional[float]   = None
+    confluences: list              = field(default_factory=list)
+    missing:     list              = field(default_factory=list)
+    timeframe:   str               = "M15"
 
 
-# ── Pip size per symbol ───────────────────────────────────────────────────────
+# ── Shared SMC helpers (mirrors strategy_strict_liquidity.py) ─────────────────
 
-def _pip(symbol: str, price: float) -> float:
-    sym = symbol.upper()
-    if "JPY" in sym:
-        return 0.01
-    if sym in ("XAUUSD",):
-        return 0.10
-    if sym in ("XAGUSD",):
-        return 0.005
-    if sym in ("USOIL",):
-        return 0.01
-    if sym in ("BTCUSDT",):
-        return 1.0
-    if sym in ("ETHUSDT", "SOLUSDT"):
-        return 0.05
-    if sym in ("BNBUSDT", "XRPUSDT"):
-        return 0.001
-    if sym in ("NAS100", "US100", "SP500", "GER40", "UK100"):
-        return 0.5
-    if sym in ("US30",):
-        return 1.0
-    if sym in ("JPN225", "JP225"):
-        return 5.0
-    return 0.0001   # default forex
+def _safe_float(v) -> float:
+    try:
+        return float(v)
+    except Exception:
+        return 0.0
 
 
-# ── Pattern detectors ─────────────────────────────────────────────────────────
-
-def _detect_sweep_rejection(df: pd.DataFrame, bias: str) -> Optional[dict]:
-    """
-    Highest-quality pattern: wick sweeps liquidity then price closes back.
-    BUY: low swept below swing low → closed above.
-    SELL: high swept above swing high → closed below.
-    """
-    if len(df) < BOS_LOOKBACK + 1:
-        return None
-
-    latest    = df.iloc[-1]
-    reference = df.iloc[-(BOS_LOOKBACK + 1):-1]
-
-    if bias == "BUY":
-        swing_low = reference["low"].min()
-        swept     = latest["low"] < swing_low
-        rejected  = latest["close"] > swing_low
-        if swept and rejected:
-            return {
-                "trigger":  "M5 Liquidity Sweep + Rejection",
-                "entry":    float(latest["close"]),
-                "sl_wick":  float(latest["low"]),
-            }
-    else:  # SELL
-        swing_high = reference["high"].max()
-        swept      = latest["high"] > swing_high
-        rejected   = latest["close"] < swing_high
-        if swept and rejected:
-            return {
-                "trigger":  "M5 Liquidity Sweep + Rejection",
-                "entry":    float(latest["close"]),
-                "sl_wick":  float(latest["high"]),
-            }
-    return None
+def _atr(df: pd.DataFrame, period: int = 14) -> float:
+    try:
+        h, l, c = df["high"], df["low"], df["close"]
+        tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
+        return _safe_float(tr.ewm(span=period, adjust=False).mean().iloc[-1])
+    except Exception:
+        return 0.0
 
 
-def _detect_bos(df: pd.DataFrame, bias: str) -> Optional[dict]:
-    """
-    Break of Structure: close breaks the last BOS_LOOKBACK-bar high/low.
-    """
-    if len(df) < BOS_LOOKBACK + 1:
-        return None
+def _ema(df: pd.DataFrame, period: int) -> float:
+    try:
+        return _safe_float(df["close"].ewm(span=period, adjust=False).mean().iloc[-1])
+    except Exception:
+        return 0.0
 
-    latest    = df.iloc[-1]
-    reference = df.iloc[-(BOS_LOOKBACK + 1):-1]
 
-    if bias == "BUY":
-        swing_high = reference["high"].max()
-        if latest["close"] > swing_high and latest["close"] > latest["open"]:
-            swing_low = reference["low"].min()
-            return {
-                "trigger":  "M5 Break of Structure",
-                "entry":    float(latest["close"]),
-                "sl_wick":  float(min(latest["low"], swing_low)),
-            }
+def _structure(df: pd.DataFrame) -> str:
+    try:
+        h = df["high"].iloc[-30:].values
+        l = df["low"].iloc[-30:].values
+        sh = [h[i] for i in range(1, len(h)-1) if h[i] > h[i-1] and h[i] > h[i+1]]
+        sl = [l[i] for i in range(1, len(l)-1) if l[i] < l[i-1] and l[i] < l[i+1]]
+        if len(sh) >= 2 and len(sl) >= 2:
+            if sh[-1] > sh[-2] and sl[-1] > sl[-2]: return "BULLISH"
+            if sh[-1] < sh[-2] and sl[-1] < sl[-2]: return "BEARISH"
+        return "RANGING"
+    except Exception:
+        return "RANGING"
+
+
+def _m30_bias(df: pd.DataFrame) -> str:
+    """M30 bias using EMA20/50 + structure — same logic as _h4_bias."""
+    try:
+        if len(df) < 20:
+            return "NEUTRAL"
+        e20 = _ema(df, 20)
+        e50 = _ema(df, min(50, len(df) - 1))
+        ms  = _structure(df)
+        if e20 > e50 and ms in ("BULLISH", "RANGING"): return "BULLISH"
+        if e20 < e50 and ms in ("BEARISH", "RANGING"): return "BEARISH"
+        return "NEUTRAL"
+    except Exception:
+        return "NEUTRAL"
+
+
+def _liq_swept(df: pd.DataFrame, bias: str) -> bool:
+    try:
+        tol = 0.0005
+        h = df["high"].iloc[-40:].values
+        l = df["low"].iloc[-40:].values
+        if bias == "SELL":
+            for i in range(1, len(h) - 3):
+                if abs(h[i] - h[i-1]) / (h[i] + 1e-9) < tol:
+                    if any(x > max(h[i], h[i-1]) for x in h[i+1:]):
+                        return True
+        else:
+            for i in range(1, len(l) - 3):
+                if abs(l[i] - l[i-1]) / (l[i] + 1e-9) < tol:
+                    if any(x < min(l[i], l[i-1]) for x in l[i+1:]):
+                        return True
+    except Exception:
+        pass
+    return False
+
+
+def _bos(df: pd.DataFrame, bias: str) -> bool:
+    try:
+        h = df["high"].iloc[-25:].values
+        l = df["low"].iloc[-25:].values
+        c = df["close"].iloc[-25:].values
+        if bias == "BUY":
+            sh = [h[i] for i in range(1, len(h)-1) if h[i] > h[i-1] and h[i] > h[i+1]]
+            return bool(sh and c[-1] > sh[-1])
+        else:
+            sl = [l[i] for i in range(1, len(l)-1) if l[i] < l[i-1] and l[i] < l[i+1]]
+            return bool(sl and c[-1] < sl[-1])
+    except Exception:
+        return False
+
+
+def _find_ob(df: pd.DataFrame, bias: str):
+    """Find the most recent valid order block."""
+    try:
+        candles = df.iloc[-50:]
+        for i in range(len(candles) - 3, 0, -1):
+            c  = candles.iloc[i]
+            cn = candles.iloc[i + 1]
+            atr = _atr(candles.iloc[:i + 1])
+            if bias == "BUY":
+                if c["close"] < c["open"] and cn["close"] > cn["open"]:
+                    if (cn["close"] - cn["open"]) > atr * 0.5:
+                        ob_l, ob_h = float(c["low"]), float(c["high"])
+                        if candles.iloc[i+1:]["low"].min() > ob_l:
+                            return ob_l, ob_h
+            else:
+                if c["close"] > c["open"] and cn["close"] < cn["open"]:
+                    if (cn["open"] - cn["close"]) > atr * 0.5:
+                        ob_l, ob_h = float(c["low"]), float(c["high"])
+                        if candles.iloc[i+1:]["high"].max() < ob_h:
+                            return ob_l, ob_h
+    except Exception:
+        pass
+    return None, None
+
+
+def _fvg(df: pd.DataFrame, bias: str) -> bool:
+    try:
+        for i in range(len(df) - 3, max(len(df) - 25, 1), -1):
+            c1, c3 = df.iloc[i - 1], df.iloc[i + 1]
+            if bias == "BUY"  and c3["low"]  > c1["high"]: return True
+            if bias == "SELL" and c3["high"] < c1["low"]:  return True
+    except Exception:
+        pass
+    return False
+
+
+def _label(score: int) -> str:
+    if score >= 90: return "ELITE"
+    if score >= 75: return "HIGH"
+    if score >= 55: return "MEDIUM"
+    return "LOW"
+
+
+# ── LTF scoring ───────────────────────────────────────────────────────────────
+
+def _ltf_score(m30_bias_ok: bool, m15_struct_ok: bool, liq: bool,
+               bos: bool, ob_ok: bool, fvg: bool) -> tuple[int, list, list]:
+    score = 0
+    conf  = []
+    miss  = []
+
+    if m30_bias_ok:
+        score += 20; conf.append("M30 Bias Aligned")
     else:
-        swing_low = reference["low"].min()
-        if latest["close"] < swing_low and latest["close"] < latest["open"]:
-            swing_high = reference["high"].max()
-            return {
-                "trigger":  "M5 Break of Structure",
-                "entry":    float(latest["close"]),
-                "sl_wick":  float(max(latest["high"], swing_high)),
-            }
-    return None
+        miss.append("M30 Bias")
 
-
-def _detect_fvg(df: pd.DataFrame, bias: str) -> Optional[dict]:
-    """
-    Fair Value Gap: 3-candle imbalance; price returned to gap and rejected.
-    FVG forms at bars -3, -2, -1. Latest bar is at the gap and rejecting.
-    """
-    if len(df) < 4:
-        return None
-
-    c1, c2, c3, latest = (df.iloc[-4], df.iloc[-3], df.iloc[-2], df.iloc[-1])
-
-    if bias == "BUY":
-        # Bullish FVG: c1.low — gap — c3.high; price came back and closed above gap
-        if c3["high"] < c1["low"]:  # gap exists
-            gap_top = float(c1["low"])
-            gap_bot = float(c3["high"])
-            in_gap  = latest["low"] <= gap_top and latest["close"] >= gap_bot
-            if in_gap and latest["close"] > latest["open"]:
-                return {
-                    "trigger":  "M5 FVG Rejection",
-                    "entry":    float(latest["close"]),
-                    "sl_wick":  float(min(latest["low"], gap_bot)),
-                }
+    if m15_struct_ok:
+        score += 15; conf.append("M15 Structure Aligned")
     else:
-        # Bearish FVG: c3.low — gap — c1.high
-        if c3["low"] > c1["high"]:
-            gap_bot = float(c1["high"])
-            gap_top = float(c3["low"])
-            in_gap  = latest["high"] >= gap_bot and latest["close"] <= gap_top
-            if in_gap and latest["close"] < latest["open"]:
-                return {
-                    "trigger":  "M5 FVG Rejection",
-                    "entry":    float(latest["close"]),
-                    "sl_wick":  float(max(latest["high"], gap_top)),
-                }
-    return None
+        miss.append("M15 Structure")
 
-
-def _detect_ob(df: pd.DataFrame, bias: str) -> Optional[dict]:
-    """
-    Order Block: last opposing candle before a strong impulse.
-    Price returned to OB; confirmed if latest bar closes back in direction.
-    """
-    if len(df) < 6:
-        return None
-
-    body = df.iloc[-6:-1]
-    latest = df.iloc[-1]
-
-    if bias == "BUY":
-        # Find last bearish candle in the reference window
-        bearish = body[body["close"] < body["open"]]
-        if bearish.empty:
-            return None
-        ob = bearish.iloc[-1]
-        ob_low, ob_high = float(ob["low"]), float(ob["high"])
-        # Price returned to OB and bullish close
-        touched_ob = latest["low"] <= ob_high and latest["high"] >= ob_low
-        if touched_ob and latest["close"] > latest["open"]:
-            return {
-                "trigger":  "M5 Order Block Touch",
-                "entry":    float(latest["close"]),
-                "sl_wick":  float(min(latest["low"], ob_low)),
-            }
+    if liq:
+        score += 20; conf.append("M15 Liquidity Sweep")
     else:
-        bullish = body[body["close"] > body["open"]]
-        if bullish.empty:
-            return None
-        ob = bullish.iloc[-1]
-        ob_low, ob_high = float(ob["low"]), float(ob["high"])
-        touched_ob = latest["high"] >= ob_low and latest["low"] <= ob_high
-        if touched_ob and latest["close"] < latest["open"]:
-            return {
-                "trigger":  "M5 Order Block Touch",
-                "entry":    float(latest["close"]),
-                "sl_wick":  float(max(latest["high"], ob_high)),
-            }
-    return None
+        miss.append("M15 Liquidity Sweep")
+
+    if bos:
+        score += 20; conf.append("M15 BOS Confirmed")
+    else:
+        miss.append("M15 BOS")
+
+    if ob_ok:
+        score += 15; conf.append("M15 Order Block")
+    else:
+        miss.append("M15 Order Block")
+
+    if fvg:
+        score += 10; conf.append("M15 FVG Present")
+
+    return score, conf, miss
 
 
 # ── Main entry point ──────────────────────────────────────────────────────────
 
 def find_ltf_entry(
-    symbol:     str,
-    bias:       str,
-    htf_entry:  float,
-    htf_tp:     float,
-    htf_rr:     float,
-    source:     str = "auto",
+    symbol:    str,
+    bias:      str,          # HTF bias: "BUY" or "SELL"
+    htf_tp:    float,        # HTF macro TP target (unchanged)
+    htf_rr:    float,        # HTF RR (for comparison in alert)
+    source:    str = "auto",
 ) -> LTFResult:
     """
-    Fetch M5 data for `symbol` and look for a precision LTF entry trigger
-    aligned with the HTF bias. Returns an LTFResult.
+    Fetch M30 and M15 data, run full SMC confluence check on LTF,
+    and return a precision entry with tight M15-based SL and HTF TP.
     """
-    no_signal = LTFResult(found=False, symbol=symbol, bias=bias,
-                          trigger="no trigger", confluences=[])
+    no_signal = LTFResult(found=False, symbol=symbol, bias=bias, htf_rr=htf_rr)
+
     try:
         from .data_fetcher import fetch_ohlcv
-        df = fetch_ohlcv(symbol, "5m", source, limit=60)
-        if df is None or len(df) < 10:
+
+        df_m30 = fetch_ohlcv(symbol, "30m", source, limit=100)
+        df_m15 = fetch_ohlcv(symbol, "15m", source, limit=100)
+
+        if df_m30 is None or len(df_m30) < 20:
             return no_signal
-        if df.attrs.get("is_mock"):
+        if df_m15 is None or len(df_m15) < 25:
+            return no_signal
+        if df_m30.attrs.get("is_mock") or df_m15.attrs.get("is_mock"):
             return no_signal
 
-        # Use the most recent closed bars (drop the live forming bar)
-        df = df.iloc[:-1].tail(LOOKBACK_BARS)
-        if len(df) < 6:
-            return no_signal
+        direction = "BULLISH" if bias == "BUY" else "BEARISH"
 
-        pip_size = _pip(symbol, float(df.iloc[-1]["close"]))
+        # ── M30 bias (structural context for LTF) ─────────────────────────────
+        m30b       = _m30_bias(df_m30)
+        m30_ok     = m30b == direction
 
-        # Run pattern detectors in priority order
-        signal = (
-            _detect_sweep_rejection(df, bias)
-            or _detect_fvg(df, bias)
-            or _detect_ob(df, bias)
-            or _detect_bos(df, bias)
+        # ── M15 structure, liquidity, BOS, OB, FVG ────────────────────────────
+        m15_struct = _structure(df_m15)
+        m15_ok     = m15_struct == direction
+
+        liq        = _liq_swept(df_m15, bias)
+        bos        = _bos(df_m15, bias)
+        ob_l, ob_h = _find_ob(df_m15, bias)
+        ob_ok      = ob_l is not None
+        fvg        = _fvg(df_m15, bias)
+
+        # ── Score ──────────────────────────────────────────────────────────────
+        score, confluences, missing = _ltf_score(
+            m30_ok, m15_ok, liq, bos, ob_ok, fvg
         )
 
-        if signal is None:
-            return no_signal
-
-        entry    = signal["entry"]
-        sl_wick  = signal["sl_wick"]
-        trigger  = signal["trigger"]
-
-        # Validate trigger is within ENTRY_ZONE_PCT of HTF entry
-        if htf_entry and abs(entry - htf_entry) / htf_entry > ENTRY_ZONE_PCT:
+        if score < LTF_MIN_SCORE:
             logger.debug(
-                "LTF trigger %.5f too far from HTF entry %.5f for %s",
-                entry, htf_entry, symbol,
+                "LTF score %d < %d for %s %s — no precision entry",
+                score, LTF_MIN_SCORE, symbol, bias
             )
             return no_signal
 
-        # Calculate SL with buffer
-        buf = pip_size * SL_BUFFER_MULT
+        # ── Entry / SL from M15 OB ────────────────────────────────────────────
+        atr_m15 = _atr(df_m15)
+        price   = _safe_float(df_m15["close"].iloc[-1])
+
         if bias == "BUY":
-            ltf_sl = round(sl_wick - buf, 6)
-            risk   = entry - ltf_sl
-            reward = htf_tp - entry
+            entry  = round(ob_h, 6) if ob_ok else round(price, 6)
+            sl     = round((ob_l - ATR_SL_BUFFER * atr_m15) if ob_ok
+                           else (price - ATR_SL_BUFFER * atr_m15), 6)
         else:
-            ltf_sl = round(sl_wick + buf, 6)
-            risk   = ltf_sl - entry
-            reward = entry - htf_tp
+            entry  = round(ob_l, 6) if ob_ok else round(price, 6)
+            sl     = round((ob_h + ATR_SL_BUFFER * atr_m15) if ob_ok
+                           else (price + ATR_SL_BUFFER * atr_m15), 6)
 
-        if risk <= 0 or reward <= 0:
+        tp = htf_tp
+
+        risk   = abs(entry - sl)
+        reward = abs(tp - entry)
+        rr     = round(reward / risk, 1) if risk > 0 else 0.0
+
+        if rr < LTF_MIN_RR:
+            logger.debug(
+                "LTF RR 1:%.1f below minimum 1:%.1f for %s", rr, LTF_MIN_RR, symbol
+            )
             return no_signal
 
-        rr = round(reward / risk, 1)
-        if rr < MIN_LTF_RR:
-            logger.debug("LTF RR %.1f below minimum %.1f for %s", rr, MIN_LTF_RR, symbol)
-            return no_signal
-
-        confluences = [
-            trigger,
-            f"HTF bias aligned ({bias})",
-            f"LTF SL: {ltf_sl} ({round(risk / pip_size, 1)} pips risk)",
-            f"HTF TP target: {htf_tp}",
-        ]
+        # ── Annotate confluences ───────────────────────────────────────────────
+        confluences.insert(0, f"HTF TP target: {tp}")
+        confluences.append(f"M15 SL distance: {round(risk / (atr_m15 + 1e-9), 1)}× M15 ATR")
 
         logger.info(
-            "LTF ENTRY FOUND | %s %s | %s | Entry=%.5f SL=%.5f TP=%.5f RR=1:%.1f",
-            symbol, bias, trigger, entry, ltf_sl, htf_tp, rr,
+            "LTF ENTRY | %s %s | score=%d | entry=%.5f sl=%.5f tp=%.5f rr=1:%.1f (HTF was 1:%.1f)",
+            symbol, bias, score, entry, sl, tp, rr, htf_rr,
         )
 
         return LTFResult(
             found       = True,
             symbol      = symbol,
             bias        = bias,
-            trigger     = trigger,
-            ltf_entry   = round(entry, 6),
-            ltf_sl      = ltf_sl,
-            ltf_tp      = htf_tp,
+            score       = score,
+            confidence  = _label(score),
+            ltf_entry   = entry,
+            ltf_sl      = sl,
+            ltf_tp      = tp,
             ltf_rr      = rr,
             htf_rr      = htf_rr,
             confluences = confluences,
+            missing     = missing,
+            timeframe   = "M15",
         )
 
     except Exception as e:
